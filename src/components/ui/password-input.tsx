@@ -18,6 +18,7 @@ export const PasswordInput = React.forwardRef<
       <Input
         type={showPassword ? "text" : "password"}
         className={cn("hide-password-toggle pr-10", className)}
+        autoComplete="current-password"
         ref={ref}
         {...props}
       />

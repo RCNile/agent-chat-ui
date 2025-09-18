@@ -226,6 +226,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 id="assistantId"
                 name="assistantId"
                 className="bg-background"
+                autoComplete="username"
                 defaultValue={assistantId || DEFAULT_ASSISTANT_ID}
                 required
               />
