@@ -142,6 +142,15 @@ export function Thread() {
   const messages = stream.messages;
   const isLoading = stream.isLoading;
 
+  // Debug log for messages changes
+  useEffect(() => {
+    console.log("DEBUG: Frontend messages changed:", {
+      messages,
+      isLoading,
+      streamError: stream.error
+    });
+  }, [messages, isLoading, stream.error]);
+
   const lastError = useRef<string | undefined>(undefined);
 
   const setThreadId = (id: string | null) => {
@@ -213,6 +222,15 @@ export function Thread() {
 
     const context =
       Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
+
+    console.log("DEBUG: Frontend submitting message:", {
+      newHumanMessage,
+      toolMessages,
+      context,
+      streamMode: ["values"],
+      streamSubgraphs: true,
+      streamResumable: true
+    });
 
     stream.submit(
       { messages: [...toolMessages, newHumanMessage], context },

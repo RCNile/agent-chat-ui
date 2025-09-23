@@ -86,6 +86,7 @@ const StreamSession = ({
     threadId: threadId ?? null,
     fetchStateHistory: true,
     onCustomEvent: (event, options) => {
+      console.log("DEBUG: Frontend received custom event:", event);
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
         options.mutate((prev) => {
           const ui = uiMessageReducer(prev.ui ?? [], event);
@@ -94,6 +95,7 @@ const StreamSession = ({
       }
     },
     onThreadId: (id) => {
+      console.log("DEBUG: Frontend received thread ID:", id);
       setThreadId(id);
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
