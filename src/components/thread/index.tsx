@@ -158,6 +158,11 @@ export function Thread() {
     // close artifact and reset artifact context
     closeArtifact();
     setArtifactContext({});
+    
+    // Reset message stabilisation cache when starting new thread
+    if (!id) {
+      prevMessagesRef.current = [];
+    }
   };
 
   useEffect(() => {

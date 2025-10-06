@@ -8,10 +8,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelLeftOpen, PanelLeftClose, Download, Trash2, Pencil, Check, X } from "lucide-react";
+import { PanelLeftOpen, PanelLeftClose, Download, Trash2, Pencil, Check, X, BookmarkIcon } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface SavedOutput {
   id: string;
@@ -83,15 +84,21 @@ function SavedOutputItem({
     setEditTitle(output.title);
   };
 
+  // Use consistent colour for all saved outputs
+  const iconColour = 'bg-orange-100 text-orange-700';
+
   return (
-    <div className="group relative w-full px-1">
+    <div className="group relative w-full px-3">
       {isEditing ? (
-        <div className="flex items-center gap-1 w-[280px] p-2" onClick={(e) => e.stopPropagation()}>
-          <div className="flex-1">
+        <div className="flex items-start gap-2 rounded-xl border bg-white p-3 shadow-sm" onClick={(e) => e.stopPropagation()}>
+          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", iconColour)}>
+            <BookmarkIcon className="h-5 w-5" />
+          </div>
+          <div className="flex-1 min-w-0">
             <Input
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
-              className="h-8 text-sm"
+              className="h-8 text-sm mb-1"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -101,77 +108,79 @@ function SavedOutputItem({
                 }
               }}
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              {output.timestamp.toLocaleDateString('en-GB')} {output.timestamp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            <p className="text-xs text-muted-foreground">
+              {output.timestamp.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
             </p>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex gap-1">
             <Button
               variant="ghost"
               size="sm"
-              className="p-1 h-6 w-6 text-green-600 hover:text-green-700"
+              className="h-8 w-8 p-0 text-green-600 hover:text-green-700"
               onClick={handleEditSave}
             >
-              <Check className="h-3 w-3" />
+              <Check className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              className="p-1 h-6 w-6 text-muted-foreground hover:text-foreground"
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
               onClick={handleEditCancel}
             >
-              <X className="h-3 w-3" />
+              <X className="h-4 w-4" />
             </Button>
           </div>
         </div>
       ) : (
-        <>
-          <Button
-            variant="ghost"
-            className="w-[280px] items-start justify-start text-left font-normal h-auto py-2"
-          >
-            <div className="flex-1 min-w-0 pr-16">
-              <p className="truncate text-ellipsis text-sm font-medium">{output.title}</p>
+        <div className="relative rounded-xl border bg-white p-3 shadow-sm transition-shadow hover:shadow-md">
+          <div className="flex items-start gap-3">
+            <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", iconColour)}>
+              <BookmarkIcon className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium leading-tight text-gray-900 line-clamp-2 mb-1">
+                {output.title}
+              </p>
               <p className="text-xs text-muted-foreground">
-                {output.timestamp.toLocaleDateString('en-GB')} {output.timestamp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                {output.timestamp.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
               </p>
             </div>
-          </Button>
-          <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+          </div>
+          <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
             <Button
               variant="ghost"
               size="sm"
-              className="p-1 h-6 w-6 text-muted-foreground hover:text-foreground"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-gray-100"
               onClick={handleEditStart}
               title="Rename"
             >
-              <Pencil className="h-3 w-3" />
+              <Pencil className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              className="p-1 h-6 w-6 text-muted-foreground hover:text-foreground"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-gray-100"
               onClick={handleExport}
               title="Copy to clipboard"
             >
-              <Download className="h-3 w-3" />
+              <Download className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              className="p-1 h-6 w-6 text-muted-foreground hover:text-destructive"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-red-50"
               onClick={handleDelete}
               disabled={isDeleting}
               title="Delete saved output"
             >
               {isDeleting ? (
-                <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
               ) : (
-                <Trash2 className="h-3 w-3" />
+                <Trash2 className="h-3.5 w-3.5" />
               )}
             </Button>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -189,19 +198,21 @@ function SavedOutputsList({
   if (outputs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
-        <div className="text-gray-400 mb-2">
-          <Download className="h-8 w-8 mx-auto" />
+        <div className="rounded-xl border bg-white p-8 shadow-sm">
+          <div className="text-gray-400 mb-3">
+            <BookmarkIcon className="h-12 w-12 mx-auto" />
+          </div>
+          <p className="text-sm font-medium text-gray-700 mb-1">No saved outputs yet</p>
+          <p className="text-xs text-gray-500">
+            Save outputs from chat messages to see them here
+          </p>
         </div>
-        <p className="text-sm text-gray-500">No saved outputs yet</p>
-        <p className="text-xs text-gray-400 mt-1">
-          Save outputs from chat messages to see them here
-        </p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
+    <div className="flex h-full w-full flex-col items-start justify-start gap-3 overflow-y-scroll px-1 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
       {outputs.map((output) => (
         <SavedOutputItem
           key={output.id}
@@ -216,12 +227,11 @@ function SavedOutputsList({
 
 function SavedOutputsLoading() {
   return (
-    <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
+    <div className="flex h-full w-full flex-col items-start justify-start gap-3 overflow-y-scroll px-1 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
       {Array.from({ length: 5 }).map((_, i) => (
-        <Skeleton
-          key={`skeleton-${i}`}
-          className="h-20 w-full"
-        />
+        <div key={`skeleton-${i}`} className="w-full px-3">
+          <Skeleton className="h-16 w-full rounded-xl" />
+        </div>
       ))}
     </div>
   );
