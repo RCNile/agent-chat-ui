@@ -12,13 +12,14 @@ import {
   DO_NOT_RENDER_ID_PREFIX,
   ensureToolCallsHaveResponses,
 } from "@/lib/ensure-tool-responses";
-import { LangGraphLogoSVG } from "../icons/langgraph";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import {
   ArrowDown,
   LoaderCircle,
   PanelRightOpen,
   PanelRightClose,
+  PanelLeftOpen,
+  PanelLeftClose,
   SquarePen,
   XIcon,
   Plus,
@@ -26,11 +27,11 @@ import {
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import ThreadHistory from "./history";
+import SavedOutputs from "./saved-outputs";
 import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
-import { GitHubSVG } from "../icons/github";
 import {
   Tooltip,
   TooltipContent,
@@ -87,29 +88,6 @@ function ScrollToBottom(props: { className?: string }) {
   );
 }
 
-function OpenGitHubRepo() {
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <a
-            href="https://github.com/langchain-ai/agent-chat-ui"
-            target="_blank"
-            className="flex items-center justify-center"
-          >
-            <GitHubSVG
-              width="24"
-              height="24"
-            />
-          </a>
-        </TooltipTrigger>
-        <TooltipContent side="left">
-          <p>Open GitHub repo</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
 
 export function Thread() {
   const [artifactContext, setArtifactContext] = useArtifactContext();
@@ -120,6 +98,10 @@ export function Thread() {
   const [assistantId] = useQueryState("assistantId");
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
     "chatHistoryOpen",
+    parseAsBoolean.withDefault(false),
+  );
+  const [savedOutputsOpen, setSavedOutputsOpen] = useQueryState(
+    "savedOutputsOpen",
     parseAsBoolean.withDefault(false),
   );
   const [hideToolCalls, setHideToolCalls] = useQueryState(
@@ -269,31 +251,54 @@ export function Thread() {
   );
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
-      <div className="relative hidden lg:flex">
-        <motion.div
-          className="absolute z-20 h-full overflow-hidden border-r bg-white"
+    <div className="flex h-screen w-full overflow-hidden relative">
+      {/* Left panel - Thread History */}
+      <motion.div
+        className="absolute left-0 z-20 h-full overflow-hidden border-r bg-white lg:block hidden"
+        style={{ width: 300 }}
+        animate={
+          isLargeScreen
+            ? { x: chatHistoryOpen ? 0 : -300 }
+            : { x: chatHistoryOpen ? 0 : -300 }
+        }
+        initial={{ x: -300 }}
+        transition={
+          isLargeScreen
+            ? { type: "spring", stiffness: 300, damping: 30 }
+            : { duration: 0 }
+        }
+      >
+        <div
+          className="relative h-full"
           style={{ width: 300 }}
-          animate={
-            isLargeScreen
-              ? { x: chatHistoryOpen ? 0 : -300 }
-              : { x: chatHistoryOpen ? 0 : -300 }
-          }
-          initial={{ x: -300 }}
-          transition={
-            isLargeScreen
-              ? { type: "spring", stiffness: 300, damping: 30 }
-              : { duration: 0 }
-          }
         >
-          <div
-            className="relative h-full"
-            style={{ width: 300 }}
-          >
-            <ThreadHistory />
-          </div>
-        </motion.div>
-      </div>
+          <ThreadHistory />
+        </div>
+      </motion.div>
+
+      {/* Right panel - Saved Outputs */}
+      <motion.div
+        className="absolute right-0 z-20 h-full overflow-hidden border-l bg-white lg:block hidden"
+        style={{ width: 300 }}
+        animate={
+          isLargeScreen
+            ? { x: savedOutputsOpen ? 0 : 300 }
+            : { x: savedOutputsOpen ? 0 : 300 }
+        }
+        initial={{ x: 300 }}
+        transition={
+          isLargeScreen
+            ? { type: "spring", stiffness: 300, damping: 30 }
+            : { duration: 0 }
+        }
+      >
+        <div
+          className="relative h-full"
+          style={{ width: 300 }}
+        >
+          <SavedOutputs />
+        </div>
+      </motion.div>
 
       <div
         className={cn(
@@ -307,14 +312,15 @@ export function Thread() {
             !chatStarted && "grid-rows-[1fr]",
           )}
           layout={isLargeScreen}
-          animate={{
-            marginLeft: chatHistoryOpen ? (isLargeScreen ? 300 : 0) : 0,
-            width: chatHistoryOpen
-              ? isLargeScreen
-                ? "calc(100% - 300px)"
-                : "100%"
-              : "100%",
-          }}
+           animate={{
+             marginLeft: chatHistoryOpen ? (isLargeScreen ? 300 : 0) : 0,
+             marginRight: savedOutputsOpen ? (isLargeScreen ? 300 : 0) : 0,
+             width: chatHistoryOpen || savedOutputsOpen
+               ? isLargeScreen
+                 ? `calc(100% - ${(chatHistoryOpen ? 300 : 0) + (savedOutputsOpen ? 300 : 0)}px)`
+                 : "100%"
+               : "100%",
+           }}
           transition={
             isLargeScreen
               ? { type: "spring", stiffness: 300, damping: 30 }
@@ -337,9 +343,6 @@ export function Thread() {
                     )}
                   </Button>
                 )}
-              </div>
-              <div className="absolute top-2 right-4 flex items-center">
-                <OpenGitHubRepo />
               </div>
             </div>
           )}
@@ -373,30 +376,38 @@ export function Thread() {
                     damping: 30,
                   }}
                 >
-                  <LangGraphLogoSVG
-                    width={32}
-                    height={32}
-                  />
                   <span className="text-xl font-semibold tracking-tight">
-                    Agent Chat
+                    Data Explorer Follow up
                   </span>
                 </motion.button>
               </div>
 
-              <div className="flex items-center gap-4">
-                <div className="flex items-center">
-                  <OpenGitHubRepo />
-                </div>
-                <TooltipIconButton
-                  size="lg"
-                  className="p-4"
-                  tooltip="New thread"
-                  variant="ghost"
-                  onClick={() => setThreadId(null)}
-                >
-                  <SquarePen className="size-5" />
-                </TooltipIconButton>
-              </div>
+               <div className="flex items-center gap-4">
+                 <TooltipIconButton
+                   size="lg"
+                   className="p-4"
+                   tooltip="New thread"
+                   variant="ghost"
+                   onClick={() => setThreadId(null)}
+                 >
+                   <SquarePen className="size-5" />
+                 </TooltipIconButton>
+                 {(!savedOutputsOpen || !isLargeScreen) && (
+                   <TooltipIconButton
+                     size="lg"
+                     className="p-4"
+                     tooltip="Saved Outputs"
+                     variant="ghost"
+                     onClick={() => setSavedOutputsOpen((p) => !p)}
+                   >
+                     {savedOutputsOpen ? (
+                       <PanelLeftClose className="size-5" />
+                     ) : (
+                       <PanelLeftOpen className="size-5" />
+                     )}
+                   </TooltipIconButton>
+                 )}
+               </div>
 
               <div className="from-background to-background/0 absolute inset-x-0 top-full h-5 bg-gradient-to-b" />
             </div>
@@ -449,9 +460,8 @@ export function Thread() {
                 <div className="sticky bottom-0 flex flex-col items-center gap-8 bg-white">
                   {!chatStarted && (
                     <div className="flex items-center gap-3">
-                      <LangGraphLogoSVG className="h-8 flex-shrink-0" />
                       <h1 className="text-2xl font-semibold tracking-tight">
-                        Agent Chat
+                        Data Explorer Follow up
                       </h1>
                     </div>
                   )}

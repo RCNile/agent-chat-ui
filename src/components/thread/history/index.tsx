@@ -1,7 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { useThreads } from "@/providers/Thread";
 import { Thread } from "@langchain/langgraph-sdk";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { MouseEvent } from "react";
 
 import { getContentString } from "../utils";
 import { useQueryState, parseAsBoolean } from "nuqs";
@@ -12,19 +13,25 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelRightOpen, PanelRightClose } from "lucide-react";
+import { PanelRightOpen, PanelRightClose, Trash2 } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { createClient } from "@/providers/client";
+import { getApiKey } from "@/lib/api-key";
+import { toast } from "sonner";
 
 function ThreadList({
   threads,
   onThreadClick,
+  onThreadDelete,
 }: {
   threads: Thread[];
   onThreadClick?: (threadId: string) => void;
+  onThreadDelete?: (threadId: string) => void;
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
   const [apiUrl] = useQueryState("apiUrl");
   const [assistantId] = useQueryState("assistantId");
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
 
   const handleThreadClick = (newThreadId: string) => {
     onThreadClick?.(newThreadId);
@@ -42,6 +49,52 @@ function ThreadList({
     setThreadId(newThreadId);
   };
 
+  const handleDeleteThread = async (threadIdToDelete: string, e: MouseEvent) => {
+    e.stopPropagation(); // Prevent thread selection
+    
+    if (!window.confirm("Are you sure you want to delete this thread? This action cannot be undone.")) {
+      return;
+    }
+
+    setDeletingThreadId(threadIdToDelete);
+    
+    try {
+      if (!apiUrl) {
+        toast.error("Error", {
+          description: "API URL not configured",
+          duration: 3000,
+        });
+        return;
+      }
+
+      const client = createClient(apiUrl, getApiKey() ?? undefined);
+      await client.threads.delete(threadIdToDelete);
+      
+      toast.success("Thread deleted successfully");
+      onThreadDelete?.(threadIdToDelete);
+      
+      // If we deleted the current thread, clear it from URL
+      if (threadIdToDelete === threadId) {
+        const params = new URLSearchParams(window.location.search);
+        if (apiUrl) params.set('apiUrl', apiUrl);
+        if (assistantId) params.set('assistantId', assistantId);
+        params.delete('threadId');
+        
+        const newUrl = `${window.location.pathname}?${params.toString()}`;
+        window.history.replaceState({}, '', newUrl);
+        setThreadId(null);
+      }
+    } catch (error) {
+      console.error("Failed to delete thread:", error);
+      toast.error("Failed to delete thread", {
+        description: "Please try again",
+        duration: 3000,
+      });
+    } finally {
+      setDeletingThreadId(null);
+    }
+  };
+
   return (
     <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
       {threads.map((t) => {
@@ -56,20 +109,38 @@ function ThreadList({
           const firstMessage = t.values.messages[0];
           itemText = getContentString(firstMessage.content);
         }
+        const isDeleting = deletingThreadId === t.thread_id;
+        const isCurrentThread = t.thread_id === threadId;
+        
         return (
           <div
             key={t.thread_id}
-            className="w-full px-1"
+            className="group relative w-full px-1"
           >
             <Button
               variant="ghost"
-              className="w-[280px] items-start justify-start text-left font-normal"
+              className={`w-[280px] items-start justify-start text-left font-normal ${
+                isCurrentThread ? "bg-accent" : ""
+              }`}
               onClick={(e) => {
                 e.preventDefault();
                 handleThreadClick(t.thread_id);
               }}
             >
-              <p className="truncate text-ellipsis">{itemText}</p>
+              <p className="truncate text-ellipsis pr-8">{itemText}</p>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 h-6 w-6 text-muted-foreground hover:text-destructive"
+              onClick={(e) => handleDeleteThread(t.thread_id, e)}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                <Trash2 className="h-3 w-3" />
+              )}
             </Button>
           </div>
         );
@@ -110,6 +181,11 @@ export default function ThreadHistory() {
       .finally(() => setThreadsLoading(false));
   }, [getThreads]);
 
+  const handleThreadDelete = (deletedThreadId: string) => {
+    // Remove the deleted thread from the local state
+    setThreads(prevThreads => prevThreads.filter(t => t.thread_id !== deletedThreadId));
+  };
+
   return (
     <>
       <div className="shadow-inner-right hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start gap-6 border-r-[1px] border-slate-300 lg:flex">
@@ -132,7 +208,10 @@ export default function ThreadHistory() {
         {threadsLoading ? (
           <ThreadHistoryLoading />
         ) : (
-          <ThreadList threads={threads} />
+          <ThreadList 
+            threads={threads} 
+            onThreadDelete={handleThreadDelete}
+          />
         )}
       </div>
       <div className="lg:hidden">
@@ -153,6 +232,7 @@ export default function ThreadHistory() {
             <ThreadList
               threads={threads}
               onThreadClick={() => setChatHistoryOpen((o) => !o)}
+              onThreadDelete={handleThreadDelete}
             />
           </SheetContent>
         </Sheet>

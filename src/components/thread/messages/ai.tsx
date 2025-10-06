@@ -9,11 +9,15 @@ import { cn } from "@/lib/utils";
 import { ToolCalls, ToolResult } from "./tool-calls";
 import { MessageContentComplex } from "@langchain/core/messages";
 import { Fragment } from "react/jsx-runtime";
+import { useState } from "react";
 import { isAgentInboxInterruptSchema } from "@/lib/agent-inbox-interrupt";
 import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
 import { useArtifact } from "../artifact";
+import { Button } from "@/components/ui/button";
+import { Bookmark, BookmarkCheck } from "lucide-react";
+import { toast } from "sonner";
 
 function CustomComponent({
   message,
@@ -104,10 +108,39 @@ export function AssistantMessage({
 }) {
   const content = message?.content ?? [];
   const contentString = getContentString(content);
+  const [isSaved, setIsSaved] = useState(false);
   const [hideToolCalls] = useQueryState(
     "hideToolCalls",
     parseAsBoolean.withDefault(false),
   );
+
+  const handleSaveOutput = () => {
+    if (!message?.id || !contentString.trim()) return;
+
+    try {
+      const savedOutputs = JSON.parse(localStorage.getItem('saved-outputs') || '[]');
+      const newOutput = {
+        id: `output-${Date.now()}`,
+        title: contentString.substring(0, 50) + (contentString.length > 50 ? '...' : ''),
+        content: contentString,
+        threadId: message.thread_id || 'unknown',
+        messageId: message.id,
+        timestamp: new Date().toISOString()
+      };
+
+      savedOutputs.push(newOutput);
+      localStorage.setItem('saved-outputs', JSON.stringify(savedOutputs));
+      
+      // Dispatch custom event to notify saved outputs component
+      window.dispatchEvent(new Event('saved-outputs-updated'));
+      
+      setIsSaved(true);
+      toast.success("Output saved to Saved Outputs");
+    } catch (error) {
+      console.error('Failed to save output:', error);
+      toast.error("Failed to save output");
+    }
+  };
 
   const thread = useStreamContext();
   const isLastMessage =
@@ -197,6 +230,22 @@ export function AssistantMessage({
                 onSelect={(branch) => thread.setBranch(branch)}
                 isLoading={isLoading}
               />
+              {contentString.trim() && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSaveOutput}
+                  disabled={isSaved}
+                  className="h-8 px-2"
+                  title={isSaved ? "Already saved" : "Save to Saved Outputs"}
+                >
+                  {isSaved ? (
+                    <BookmarkCheck className="h-4 w-4 text-green-600" />
+                  ) : (
+                    <Bookmark className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
               <CommandBar
                 content={contentString}
                 isLoading={isLoading}
