@@ -116,6 +116,8 @@ export function Thread() {
   const [artifactOpen, closeArtifact] = useArtifactOpen();
 
   const [threadId, _setThreadId] = useQueryState("threadId");
+  const [apiUrl] = useQueryState("apiUrl");
+  const [assistantId] = useQueryState("assistantId");
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
     "chatHistoryOpen",
     parseAsBoolean.withDefault(false),
@@ -142,18 +144,20 @@ export function Thread() {
   const messages = stream.messages;
   const isLoading = stream.isLoading;
 
-  // Debug log for messages changes
-  useEffect(() => {
-    console.log("DEBUG: Frontend messages changed:", {
-      messages,
-      isLoading,
-      streamError: stream.error
-    });
-  }, [messages, isLoading, stream.error]);
 
   const lastError = useRef<string | undefined>(undefined);
 
   const setThreadId = (id: string | null) => {
+    // Preserve apiUrl and assistantId in URL when switching threads
+    const params = new URLSearchParams(window.location.search);
+    if (apiUrl) params.set('apiUrl', apiUrl);
+    if (assistantId) params.set('assistantId', assistantId);
+    if (id) params.set('threadId', id);
+    else params.delete('threadId');
+    
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', newUrl);
+    
     _setThreadId(id);
 
     // close artifact and reset artifact context
@@ -222,15 +226,6 @@ export function Thread() {
 
     const context =
       Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
-
-    console.log("DEBUG: Frontend submitting message:", {
-      newHumanMessage,
-      toolMessages,
-      context,
-      streamMode: ["values"],
-      streamSubgraphs: true,
-      streamResumable: true
-    });
 
     stream.submit(
       { messages: [...toolMessages, newHumanMessage], context },

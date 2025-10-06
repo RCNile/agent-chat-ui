@@ -23,6 +23,24 @@ function ThreadList({
   onThreadClick?: (threadId: string) => void;
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
+  const [apiUrl] = useQueryState("apiUrl");
+  const [assistantId] = useQueryState("assistantId");
+
+  const handleThreadClick = (newThreadId: string) => {
+    onThreadClick?.(newThreadId);
+    if (newThreadId === threadId) return;
+    
+    // Preserve apiUrl and assistantId in URL when switching threads
+    const params = new URLSearchParams(window.location.search);
+    if (apiUrl) params.set('apiUrl', apiUrl);
+    if (assistantId) params.set('assistantId', assistantId);
+    params.set('threadId', newThreadId);
+    
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', newUrl);
+    
+    setThreadId(newThreadId);
+  };
 
   return (
     <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
@@ -48,9 +66,7 @@ function ThreadList({
               className="w-[280px] items-start justify-start text-left font-normal"
               onClick={(e) => {
                 e.preventDefault();
-                onThreadClick?.(t.thread_id);
-                if (t.thread_id === threadId) return;
-                setThreadId(t.thread_id);
+                handleThreadClick(t.thread_id);
               }}
             >
               <p className="truncate text-ellipsis">{itemText}</p>
@@ -92,7 +108,7 @@ export default function ThreadHistory() {
       .then(setThreads)
       .catch(console.error)
       .finally(() => setThreadsLoading(false));
-  }, []);
+  }, [getThreads]);
 
   return (
     <>

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-# langgraph-server/app.py
+
 import asyncio
 import json
 import os
 import pathlib
+import sqlite3
+import time
 import uuid
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import uvicorn
 from dotenv import load_dotenv
@@ -23,9 +26,9 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Environment / model setup
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 if not os.getenv("OPENAI_API_KEY"):
     raise RuntimeError(
@@ -36,6 +39,20 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 MODEL_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.2"))
 EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 DOCS_PATH = pathlib.Path(os.getenv("DOCS_PATH", "data/critical_role"))
+DB_PATH = pathlib.Path(os.getenv("CHAT_DB_PATH", "langgraph.db"))
+DB_TIMEOUT = float(os.getenv("CHAT_DB_TIMEOUT", "30"))
+DB_BUSY_TIMEOUT_MS = int(os.getenv("CHAT_DB_BUSY_TIMEOUT_MS", "5000"))
+DB_LOCK_RETRY_ATTEMPTS = int(os.getenv("CHAT_DB_LOCK_RETRY_ATTEMPTS", "5"))
+DB_LOCK_RETRY_DELAY = float(os.getenv("CHAT_DB_LOCK_RETRY_DELAY", "0.1"))
+
+DEBUG_LOGGING_ENABLED = os.getenv("CHAT_DEBUG_LOG", "false").lower() == "true"
+
+logger = logging.getLogger("langgraph-server")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.DEBUG if DEBUG_LOGGING_ENABLED else logging.INFO)
 
 llm = ChatOpenAI(model=OPENAI_MODEL, temperature=MODEL_TEMPERATURE)
 embeddings = OpenAIEmbeddings(model=EMBED_MODEL)
@@ -44,9 +61,8 @@ prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are a meticulous Critical Role lore expert. Use the context when relevant, "
-            "cite specific story beats or episodes when possible, and acknowledge uncertainty "
-            "rather than guessing.\n\nContext:\n{context}",
+            "You are a thorough assistant. Use supplied context when relevant, cite concrete "
+            "details where you can, and acknowledge uncertainty instead of guessing.\n\nContext:\n{context}",
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]
@@ -56,7 +72,7 @@ chat_chain = prompt | llm
 
 
 def call_model(state: MessagesState) -> Dict[str, List[AIMessage]]:
-    """LangGraph node: augment the latest user question with retrieved context, then answer."""
+    """Augment the latest user question with retrieved context, then answer."""
     messages = state["messages"]
     query_text = extract_last_user_question(messages)
     retrieved_docs = retriever.search(query_text) if query_text else []
@@ -64,14 +80,11 @@ def call_model(state: MessagesState) -> Dict[str, List[AIMessage]]:
     ai_msg = chat_chain.invoke({"messages": messages, "context": context})
     return {"messages": [ai_msg]}
 
-
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Retrieval helpers
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 class Retriever:
-    """Simple wrapper around a FAISS vector store."""
-
     def __init__(self, vectorstore: Optional[FAISS]):
         self.vectorstore = vectorstore
 
@@ -140,9 +153,262 @@ def build_context_string(docs: List[Document]) -> str:
 
 retriever = Retriever(build_vectorstore(load_documents()))
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# SQLite persistence helpers
+# ---------------------------------------------------------------------------
+
+LOCKED_ERROR_SUBSTRINGS = ("database is locked", "database is busy")
+T = TypeVar("T")
+
+
+def run_with_lock_retry(operation: Callable[[], T]) -> T:
+    op_name = getattr(operation, "__name__", repr(operation))
+    for attempt in range(DB_LOCK_RETRY_ATTEMPTS):
+        try:
+            result = operation()
+            if DEBUG_LOGGING_ENABLED:
+                logger.debug("run_with_lock_retry succeeded (attempt %s) for %s", attempt + 1, op_name)
+            return result
+        except sqlite3.OperationalError as exc:
+            message = str(exc).lower()
+            logger.warning("run_with_lock_retry hit sqlite error on attempt %s for %s: %s", attempt + 1, op_name, exc)
+            if (
+                not any(token in message for token in LOCKED_ERROR_SUBSTRINGS)
+                or attempt == DB_LOCK_RETRY_ATTEMPTS - 1
+            ):
+                raise
+            delay = DB_LOCK_RETRY_DELAY * (attempt + 1)
+            logger.debug("Retrying %s after %.2fs delay due to lock", op_name, delay)
+            time.sleep(delay)
+    raise RuntimeError("Database operation retry exhausted")
+
+
+def get_db_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(
+        DB_PATH,
+        timeout=DB_TIMEOUT,
+        check_same_thread=False,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {DB_BUSY_TIMEOUT_MS}")
+    return conn
+
+
+def init_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with get_db_connection() as conn:
+        conn.execute("PRAGMA journal_mode=WAL").fetchone()
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS threads (
+                thread_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                message_json TEXT NOT NULL,
+                FOREIGN KEY (thread_id) REFERENCES threads(thread_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_messages_thread_created
+                ON messages(thread_id, created_at);
+            """
+        )
+
+
+def thread_from_row(
+    row: sqlite3.Row,
+    include_messages: bool = True,
+    message_limit: Optional[int] = None,
+) -> Dict[str, Any]:
+    thread = {
+        "thread_id": row["thread_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "metadata": json.loads(row["metadata"] or "{}"),
+        "status": "idle",
+    }
+    if include_messages:
+        thread["values"] = {
+            "messages": fetch_messages(row["thread_id"], limit=message_limit)
+        }
+    return thread
+
+
+def get_thread_row(
+    thread_id: str,
+    *,
+    include_messages: bool = True,
+    message_limit: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    def load():
+        with get_db_connection() as conn:
+            return conn.execute(
+                "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+            ).fetchone()
+
+    row = run_with_lock_retry(load)
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("get_thread_row(%s) -> %s", thread_id, "hit" if row else "miss")
+    if not row:
+        return None
+    return thread_from_row(
+        row, include_messages=include_messages, message_limit=message_limit
+    )
+
+
+def upsert_thread(
+    thread_id: str, metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    existing = get_thread_row(thread_id, include_messages=False)
+    now = utc_now_iso()
+    effective_metadata = metadata or (existing["metadata"] if existing else {})
+    metadata_json = json.dumps(effective_metadata)
+    if existing:
+        def do_update():
+            with get_db_connection() as conn:
+                conn.execute(
+                    "UPDATE threads SET updated_at = ?, metadata = ? WHERE thread_id = ?",
+                    (now, metadata_json, thread_id),
+                )
+
+        run_with_lock_retry(do_update)
+    else:
+        def do_insert():
+            with get_db_connection() as conn:
+                conn.execute(
+                    (
+                        "INSERT INTO threads(thread_id, created_at, updated_at, metadata) "
+                        "VALUES (?, ?, ?, ?)"
+                    ),
+                    (thread_id, now, now, metadata_json),
+                )
+
+        run_with_lock_retry(do_insert)
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("upsert_thread(%s) -> existing=%s metadata_keys=%s", thread_id, bool(existing), sorted((effective_metadata or {}).keys()))
+    return get_thread_row(thread_id)
+
+
+def merge_thread_metadata(thread_id: str, metadata: Optional[Dict[str, Any]]):
+    if not metadata:
+        return
+    existing = get_thread_row(thread_id, include_messages=False)
+    base = existing["metadata"] if existing else {}
+    base.update(metadata)
+    upsert_thread(thread_id, base)
+
+
+def list_threads_db(
+    limit: int,
+    offset: int,
+    metadata_filter: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    def run_query(filter_obj: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        where_clauses: List[str] = []
+        params: List[Any] = []
+        query = "SELECT * FROM threads"
+        if filter_obj:
+            for key, value in filter_obj.items():
+                where_clauses.append(f"json_extract(metadata, '$.{key}') = ?")
+                params.append(value)
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        query += " ORDER BY datetime(updated_at) DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        def query_db():
+            with get_db_connection() as conn:
+                return conn.execute(query, params).fetchall()
+
+        rows = run_with_lock_retry(query_db)
+        if DEBUG_LOGGING_ENABLED:
+            logger.debug("list_threads_db(%s) returned %s rows", filter_obj, len(rows))
+        return [
+            thread_from_row(row, include_messages=True, message_limit=50)
+            for row in rows
+        ]
+
+    threads = run_query(metadata_filter)
+    if metadata_filter and not threads:
+        threads = run_query(None)
+    return threads
+
+
+def delete_thread_db(thread_id: str):
+    def delete():
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM threads WHERE thread_id = ?", (thread_id,))
+
+    run_with_lock_retry(delete)
+
+
+def persist_messages(thread_id: str, messages: List[Dict[str, Any]]):
+    if not messages:
+        return
+    rows = []
+    for message in messages:
+        message_id = message.get("id") or str(uuid.uuid4())
+        message["id"] = message_id
+        created_at = message.get("created_at", utc_now_iso())
+        message["created_at"] = created_at
+        rows.append((message_id, thread_id, created_at, json.dumps(message)))
+    def write():
+        with get_db_connection() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO messages(id, thread_id, created_at, message_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("persist_messages(%s) -> %s messages", thread_id, len(rows))
+    run_with_lock_retry(write)
+
+
+def fetch_messages(thread_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    query = (
+        "SELECT message_json FROM messages "
+        "WHERE thread_id = ? ORDER BY datetime(created_at) ASC"
+    )
+    params: List[Any] = [thread_id]
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    def query_db():
+        with get_db_connection() as conn:
+            return conn.execute(query, params).fetchall()
+
+    rows = run_with_lock_retry(query_db)
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("fetch_messages(%s, limit=%s) -> %s rows", thread_id, limit, len(rows))
+    return [json.loads(row["message_json"]) for row in rows]
+
+
+def touch_thread(thread_id: str):
+    now = utc_now_iso()
+    def update_thread():
+        with get_db_connection() as conn:
+            conn.execute(
+                "UPDATE threads SET updated_at = ? WHERE thread_id = ?", (now, thread_id)
+            )
+
+    run_with_lock_retry(update_thread)
+
+
+init_db()
+
+# ---------------------------------------------------------------------------
 # FastAPI + LangGraph wiring
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 app = FastAPI(title="LangGraph Chatbot Server")
 
@@ -165,24 +431,6 @@ def utc_now_iso() -> str:
     import datetime
 
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def ensure_thread_storage(thread_id: str):
-    if thread_id not in threads_storage:
-        now = utc_now_iso()
-        threads_storage[thread_id] = {
-            "thread_id": thread_id,
-            "created_at": now,
-            "updated_at": now,
-            "metadata": {},
-            "status": "idle",
-        }
-    thread_messages.setdefault(thread_id, [])
-
-
-def touch_thread(thread_id: str):
-    if thread_id in threads_storage:
-        threads_storage[thread_id]["updated_at"] = utc_now_iso()
 
 
 def render_text(content: Any) -> str:
@@ -241,26 +489,47 @@ def to_ui_message(message: Any) -> Dict[str, Any]:
     if not role:
         role = "assistant" if msg_type == "ai" else "user" if msg_type == "human" else msg_type
 
-    return {
-        "id": raw.get("id", str(uuid.uuid4())),
-        "type": msg_type,
-        "role": role,
-        "content": content_blocks,
-    }
+    raw.update(
+        {
+            "id": raw.get("id", str(uuid.uuid4())),
+            "type": msg_type,
+            "role": role,
+            "content": content_blocks,
+            "created_at": raw.get("created_at", utc_now_iso()),
+        }
+    )
+    return raw
 
 
-def checkpoint_payload(thread_id: str, limit: Optional[int] = None) -> Dict[str, Any]:
-    messages = thread_messages.get(thread_id, [])
-    if limit is not None and limit >= 0:
-        messages = messages[-limit:]
-    return {
-        "checkpoint_id": f"{thread_id}-latest",
-        "parent_checkpoint_id": None,
-        "created_at": utc_now_iso(),
-        "config": {"configurable": {"thread_id": thread_id}},
-        "metadata": {},
-        "values": {"messages": messages},
-    }
+def extract_metadata_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    if isinstance(payload.get("metadata"), dict):
+        metadata.update(payload["metadata"])
+
+    # Try to extract assistant_id/graph_id from root level
+    assistant_id = payload.get("assistant_id")
+    graph_id = payload.get("graph_id")
+    
+    # Also check in config.configurable if present
+    config = payload.get("config", {})
+    if isinstance(config, dict):
+        configurable = config.get("configurable", {})
+        if isinstance(configurable, dict):
+            assistant_id = assistant_id or configurable.get("assistant_id")
+            graph_id = graph_id or configurable.get("graph_id")
+
+    if assistant_id:
+        metadata.setdefault("assistant_id", assistant_id)
+    if graph_id:
+        metadata.setdefault("graph_id", graph_id)
+
+    # If only one identifier is present, mirror it so filtering works for both patterns.
+    if assistant_id and "graph_id" not in metadata:
+        metadata["graph_id"] = assistant_id
+    if graph_id and "assistant_id" not in metadata:
+        metadata["assistant_id"] = graph_id
+
+    return metadata
 
 
 async def parse_json_body(request: Request) -> Dict[str, Any]:
@@ -271,10 +540,6 @@ async def parse_json_body(request: Request) -> Dict[str, Any]:
         return json.loads(raw_payload)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {exc}")
-
-
-threads_storage: Dict[str, Dict[str, Any]] = {}
-thread_messages: Dict[str, List[Dict[str, Any]]] = {}
 
 
 class ThreadCreate(BaseModel):
@@ -302,23 +567,14 @@ def info():
     return {
         "name": "LangChain Chatbot",
         "description": "LangGraph + GPT-4o + RAG agent",
-        "version": "2.0.0",
+        "version": "2.0.2",
         "model": OPENAI_MODEL,
     }
 
 
 @app.get("/assistants/{assistant_id}")
 def get_assistant(assistant_id: str):
-    ensure_thread_storage(assistant_id)
-    thread = threads_storage[assistant_id]
-    return {
-        "assistant_id": assistant_id,
-        "graph_id": assistant_id,
-        "created_at": thread["created_at"],
-        "updated_at": thread["updated_at"],
-        "config": {},
-        "metadata": {},
-    }
+    return upsert_thread(assistant_id)
 
 
 @app.get("/threads")
@@ -327,57 +583,77 @@ def list_threads(
     offset: int = Query(0, ge=0),
     metadata: Optional[str] = Query(None),
 ):
-    thread_list = list(threads_storage.values())
-    return thread_list[offset : offset + limit]
+    metadata_filter = json.loads(metadata) if metadata else None
+    return list_threads_db(limit=limit, offset=offset, metadata_filter=metadata_filter)
 
 
-@app.get("/threads/search")
-@app.post("/threads/search")
-def search_threads(
-    limit: int = Query(10, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    metadata: Optional[str] = Query(None),
-):
-    return list_threads(limit=limit, offset=offset, metadata=metadata)
+@app.get("/threads/{thread_id}")
+def get_thread(thread_id: str):
+    thread = get_thread_row(thread_id)
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return thread
+
+
+@app.patch("/threads/{thread_id}")
+async def update_thread(thread_id: str, request: Request):
+    existing = get_thread_row(thread_id, include_messages=False)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    payload = await parse_json_body(request)
+    thread_update = ThreadUpdate.model_validate(payload)
+    metadata = existing["metadata"]
+    if thread_update.metadata:
+        metadata.update(thread_update.metadata)
+    merge_thread_metadata(thread_id, metadata)
+    return get_thread_row(thread_id)
+
+
+@app.delete("/threads/{thread_id}")
+def delete_thread(thread_id: str):
+    existing = get_thread_row(thread_id, include_messages=False)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    delete_thread_db(thread_id)
+    return {"message": "Thread deleted successfully"}
 
 
 @app.post("/threads")
 async def create_thread(request: Request):
     data = await parse_json_body(request)
+    base_metadata = extract_metadata_from_payload(data)
     thread_data = ThreadCreate.model_validate(data)
+    merged = thread_data.metadata or {}
+    merged.update(base_metadata)
     thread_id = str(uuid.uuid4())
-    ensure_thread_storage(thread_id)
-    if thread_data.metadata:
-        threads_storage[thread_id]["metadata"] = thread_data.metadata
-    return threads_storage[thread_id]
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("create_thread generated %s with metadata=%s", thread_id, merged)
+    return upsert_thread(thread_id, merged)
 
 
-@app.get("/threads/{thread_id}")
-def get_thread(thread_id: str):
-    if thread_id not in threads_storage:
-        raise HTTPException(status_code=404, detail="Thread not found")
-    return threads_storage[thread_id]
+@app.get("/threads/search")
+@app.post("/threads/search")
+async def search_threads(
+    request: Request,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+    metadata: Optional[str] = None,
+):
+    body: Dict[str, Any] = {}
+    if request.method == "POST":
+        body = await parse_json_body(request)
+        limit = limit if limit is not None else body.get("limit")
+        offset = offset if offset is not None else body.get("offset")
+        metadata_filter = body.get("metadata")
+    else:
+        metadata_filter = json.loads(metadata) if metadata else None
 
-
-@app.patch("/threads/{thread_id}")
-async def update_thread(thread_id: str, request: Request):
-    if thread_id not in threads_storage:
-        raise HTTPException(status_code=404, detail="Thread not found")
-    payload = await parse_json_body(request)
-    thread_update = ThreadUpdate.model_validate(payload)
-    if thread_update.metadata:
-        threads_storage[thread_id]["metadata"].update(thread_update.metadata)
-    touch_thread(thread_id)
-    return threads_storage[thread_id]
-
-
-@app.delete("/threads/{thread_id}")
-def delete_thread(thread_id: str):
-    if thread_id not in threads_storage:
-        raise HTTPException(status_code=404, detail="Thread not found")
-    del threads_storage[thread_id]
-    thread_messages.pop(thread_id, None)
-    return {"message": "Thread deleted successfully"}
+    limit = int(limit) if limit is not None else 10
+    offset = int(offset) if offset is not None else 0
+    logger.info("search_threads with metadata_filter: %s", metadata_filter)
+    result = list_threads_db(limit=limit, offset=offset, metadata_filter=metadata_filter)
+    logger.info("search_threads returned %s threads", len(result))
+    return result
 
 
 @app.get("/threads/{thread_id}/state")
@@ -392,26 +668,80 @@ def get_thread_history(
     limit: int = Query(10, ge=1, le=100),
     before: Optional[str] = Query(None),
 ):
-    ensure_thread_storage(thread_id)
-    return [checkpoint_payload(thread_id, limit=limit)]
+    if not get_thread_row(thread_id, include_messages=False):
+        if DEBUG_LOGGING_ENABLED:
+            logger.debug("get_thread_history(%s) -> thread missing", thread_id)
+        return []
+    checkpoint = checkpoint_payload(thread_id, limit=limit)
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("get_thread_history(%s, limit=%s) -> %s messages", thread_id, limit, len(checkpoint.get("values", {}).get("messages", [])))
+    return [checkpoint]
+
+
+def checkpoint_payload(thread_id: str, limit: Optional[int] = None) -> Dict[str, Any]:
+    messages = fetch_messages(thread_id, limit=limit)
+    return {
+        "checkpoint_id": f"{thread_id}-latest",
+        "parent_checkpoint_id": None,
+        "created_at": utc_now_iso(),
+        "config": {"configurable": {"thread_id": thread_id}},
+        "metadata": {},
+        "values": {"messages": messages},
+    }
 
 
 @app.post("/threads/{thread_id}/runs")
-async def create_run(thread_id: str, request: Request):
-    ensure_thread_storage(thread_id)
+async def create_run(
+    thread_id: str, 
+    request: Request,
+    assistant_id: Optional[str] = None,
+    graph_id: Optional[str] = None,
+):
+    if not get_thread_row(thread_id, include_messages=False):
+        # Create thread with metadata from query params if available
+        initial_metadata = {}
+        if assistant_id:
+            initial_metadata["assistant_id"] = assistant_id
+            initial_metadata["graph_id"] = assistant_id
+        elif graph_id:
+            initial_metadata["graph_id"] = graph_id
+            initial_metadata["assistant_id"] = graph_id
+        upsert_thread(thread_id, initial_metadata if initial_metadata else None)
+
     run_payload = await parse_json_body(request)
     run_data = RunCreate.model_validate(run_payload)
+
+    metadata_update = extract_metadata_from_payload(run_payload)
+    # Also use query params if present
+    if assistant_id and "assistant_id" not in metadata_update:
+        metadata_update["assistant_id"] = assistant_id
+        metadata_update["graph_id"] = assistant_id
+    elif graph_id and "graph_id" not in metadata_update:
+        metadata_update["graph_id"] = graph_id
+        metadata_update["assistant_id"] = graph_id
+    
+    if run_data.metadata:
+        metadata_update.update(run_data.metadata)
+    merge_thread_metadata(thread_id, metadata_update)
+
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("create_run(%s) metadata_update=%s", thread_id, metadata_update)
 
     run_id = str(uuid.uuid4())
     messages = run_data.input.get("messages", [])
 
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("create_run(%s) received %s incoming messages", thread_id, len(messages))
+
     ui_messages = [to_ui_message(msg) for msg in messages]
-    thread_messages[thread_id].extend(ui_messages)
+    persist_messages(thread_id, ui_messages)
     lc_messages = [to_lc_message(msg) for msg in ui_messages]
 
     result_state = agent.invoke({"messages": lc_messages})
     result_ui = [to_ui_message(msg) for msg in result_state.get("messages", [])]
-    thread_messages[thread_id].extend(result_ui)
+    persist_messages(thread_id, result_ui)
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("create_run(%s) produced %s messages", thread_id, len(result_ui))
     touch_thread(thread_id)
 
     return {
@@ -425,15 +755,47 @@ async def create_run(thread_id: str, request: Request):
 
 @app.get("/threads/{thread_id}/runs")
 def list_runs(thread_id: str):
-    ensure_thread_storage(thread_id)
+    if not get_thread_row(thread_id, include_messages=False):
+        upsert_thread(thread_id)
     return {"runs": [], "total": 0}
 
 
 @app.post("/threads/{thread_id}/runs/stream")
-async def create_stream_run(thread_id: str, request: Request):
-    ensure_thread_storage(thread_id)
+async def create_stream_run(
+    thread_id: str, 
+    request: Request,
+    assistant_id: Optional[str] = None,
+    graph_id: Optional[str] = None,
+):
+    if not get_thread_row(thread_id, include_messages=False):
+        logger.info("Creating new thread %s", thread_id)
+        # Create thread with metadata from query params if available
+        initial_metadata = {}
+        if assistant_id:
+            initial_metadata["assistant_id"] = assistant_id
+            initial_metadata["graph_id"] = assistant_id
+        elif graph_id:
+            initial_metadata["graph_id"] = graph_id
+            initial_metadata["assistant_id"] = graph_id
+        upsert_thread(thread_id, initial_metadata if initial_metadata else None)
+
     run_payload = await parse_json_body(request)
     run_data = RunCreate.model_validate(run_payload)
+
+    metadata_update = extract_metadata_from_payload(run_payload)
+    # Also use query params if present
+    if assistant_id and "assistant_id" not in metadata_update:
+        metadata_update["assistant_id"] = assistant_id
+        metadata_update["graph_id"] = assistant_id
+    elif graph_id and "graph_id" not in metadata_update:
+        metadata_update["graph_id"] = graph_id
+        metadata_update["assistant_id"] = graph_id
+    
+    if run_data.metadata:
+        metadata_update.update(run_data.metadata)
+    logger.info("Thread %s metadata_update: %s", thread_id, metadata_update)
+    merge_thread_metadata(thread_id, metadata_update)
+
     run_id = str(uuid.uuid4())
 
     async def generate_stream():
@@ -450,14 +812,14 @@ async def create_stream_run(thread_id: str, request: Request):
                 return
 
             ui_messages = [to_ui_message(msg) for msg in incoming]
-            thread_messages[thread_id].extend(ui_messages)
+            persist_messages(thread_id, ui_messages)
             lc_messages = [to_lc_message(msg) for msg in ui_messages]
 
             result_state = agent.invoke({"messages": lc_messages})
             result_msgs = result_state.get("messages", [])
             for message in result_msgs:
                 ui_message = to_ui_message(message)
-                thread_messages[thread_id].append(ui_message)
+                persist_messages(thread_id, [ui_message])
 
                 if ui_message["type"] == "ai":
                     event_payload = {

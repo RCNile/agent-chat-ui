@@ -77,16 +77,36 @@ const StreamSession = ({
   apiUrl: string;
   assistantId: string;
 }) => {
-  const [threadId, setThreadId] = useQueryState("threadId");
+  const [threadId, _setThreadId] = useQueryState("threadId");
+  const [, setApiUrlParam] = useQueryState("apiUrl");
+  const [, setAssistantIdParam] = useQueryState("assistantId");
   const { getThreads, setThreads } = useThreads();
+
+  // Wrapper to ensure apiUrl and assistantId persist in URL
+  const setThreadId = (id: string | null) => {
+    _setThreadId(id);
+    // Ensure apiUrl and assistantId stay in URL when changing threads
+    if (apiUrl) setApiUrlParam(apiUrl);
+    if (assistantId) setAssistantIdParam(assistantId);
+  };
+
+  // Ensure apiUrl and assistantId are in URL on mount
+  useEffect(() => {
+    if (apiUrl) setApiUrlParam(apiUrl);
+    if (assistantId) setAssistantIdParam(assistantId);
+  }, [apiUrl, assistantId, setApiUrlParam, setAssistantIdParam]);
+
   const streamValue = useTypedStream({
     apiUrl,
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
     fetchStateHistory: true,
+    metadata: {
+      assistant_id: assistantId,
+      graph_id: assistantId,
+    },
     onCustomEvent: (event, options) => {
-      console.log("DEBUG: Frontend received custom event:", event);
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
         options.mutate((prev) => {
           const ui = uiMessageReducer(prev.ui ?? [], event);
@@ -95,7 +115,6 @@ const StreamSession = ({
       }
     },
     onThreadId: (id) => {
-      console.log("DEBUG: Frontend received thread ID:", id);
       setThreadId(id);
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
