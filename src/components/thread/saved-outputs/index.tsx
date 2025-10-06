@@ -8,8 +8,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelLeftOpen, PanelLeftClose, Download, Trash2 } from "lucide-react";
+import { PanelLeftOpen, PanelLeftClose, Download, Trash2, Pencil, Check, X } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
 interface SavedOutput {
@@ -24,11 +25,15 @@ interface SavedOutput {
 function SavedOutputItem({
   output,
   onDelete,
+  onUpdate,
 }: {
   output: SavedOutput;
   onDelete: (id: string) => void;
+  onUpdate: (id: string, newTitle: string) => void;
 }) {
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(output.title);
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -55,44 +60,119 @@ function SavedOutputItem({
     toast.success("Content copied to clipboard");
   };
 
+  const handleEditStart = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsEditing(true);
+    setEditTitle(output.title);
+  };
+
+  const handleEditSave = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!editTitle.trim()) {
+      toast.error("Title cannot be empty");
+      return;
+    }
+    onUpdate(output.id, editTitle.trim());
+    setIsEditing(false);
+    toast.success("Title updated");
+  };
+
+  const handleEditCancel = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsEditing(false);
+    setEditTitle(output.title);
+  };
+
   return (
     <div className="group relative w-full px-1">
-      <Button
-        variant="ghost"
-        className="w-[280px] items-start justify-start text-left font-normal h-auto py-2"
-      >
-        <div className="flex-1 min-w-0 pr-12">
-          <p className="truncate text-ellipsis text-sm font-medium">{output.title}</p>
-          <p className="text-xs text-muted-foreground">
-            {output.timestamp.toLocaleDateString('en-GB')} {output.timestamp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-          </p>
+      {isEditing ? (
+        <div className="flex items-center gap-1 w-[280px] p-2" onClick={(e) => e.stopPropagation()}>
+          <div className="flex-1">
+            <Input
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              className="h-8 text-sm"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleEditSave(e as any);
+                } else if (e.key === 'Escape') {
+                  handleEditCancel(e as any);
+                }
+              }}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              {output.timestamp.toLocaleDateString('en-GB')} {output.timestamp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="p-1 h-6 w-6 text-green-600 hover:text-green-700"
+              onClick={handleEditSave}
+            >
+              <Check className="h-3 w-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="p-1 h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={handleEditCancel}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
         </div>
-      </Button>
-      <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="p-1 h-6 w-6 text-muted-foreground hover:text-foreground"
-          onClick={handleExport}
-          title="Copy to clipboard"
-        >
-          <Download className="h-3 w-3" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="p-1 h-6 w-6 text-muted-foreground hover:text-destructive"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          title="Delete saved output"
-        >
-          {isDeleting ? (
-            <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          ) : (
-            <Trash2 className="h-3 w-3" />
-          )}
-        </Button>
-      </div>
+      ) : (
+        <>
+          <Button
+            variant="ghost"
+            className="w-[280px] items-start justify-start text-left font-normal h-auto py-2"
+          >
+            <div className="flex-1 min-w-0 pr-16">
+              <p className="truncate text-ellipsis text-sm font-medium">{output.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {output.timestamp.toLocaleDateString('en-GB')} {output.timestamp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            </div>
+          </Button>
+          <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="p-1 h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={handleEditStart}
+              title="Rename"
+            >
+              <Pencil className="h-3 w-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="p-1 h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={handleExport}
+              title="Copy to clipboard"
+            >
+              <Download className="h-3 w-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="p-1 h-6 w-6 text-muted-foreground hover:text-destructive"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              title="Delete saved output"
+            >
+              {isDeleting ? (
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                <Trash2 className="h-3 w-3" />
+              )}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -100,9 +180,11 @@ function SavedOutputItem({
 function SavedOutputsList({
   outputs,
   onDelete,
+  onUpdate,
 }: {
   outputs: SavedOutput[];
   onDelete: (id: string) => void;
+  onUpdate: (id: string, newTitle: string) => void;
 }) {
   if (outputs.length === 0) {
     return (
@@ -125,6 +207,7 @@ function SavedOutputsList({
           key={output.id}
           output={output}
           onDelete={onDelete}
+          onUpdate={onUpdate}
         />
       ))}
     </div>
@@ -206,6 +289,16 @@ export default function SavedOutputs() {
     localStorage.setItem('saved-outputs', JSON.stringify(updated));
   };
 
+  const handleUpdate = (id: string, newTitle: string) => {
+    const updated = outputs.map(output => 
+      output.id === id ? { ...output, title: newTitle } : output
+    );
+    setOutputs(updated);
+    localStorage.setItem('saved-outputs', JSON.stringify(updated));
+    // Dispatch custom event for other windows
+    window.dispatchEvent(new Event('saved-outputs-updated'));
+  };
+
   return (
     <>
       <div className="shadow-inner-left hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start gap-6 border-l-[1px] border-slate-300 lg:flex">
@@ -228,7 +321,7 @@ export default function SavedOutputs() {
         {loading ? (
           <SavedOutputsLoading />
         ) : (
-          <SavedOutputsList outputs={outputs} onDelete={handleDelete} />
+          <SavedOutputsList outputs={outputs} onDelete={handleDelete} onUpdate={handleUpdate} />
         )}
       </div>
       <div className="lg:hidden">
@@ -246,7 +339,7 @@ export default function SavedOutputs() {
             <SheetHeader>
               <SheetTitle>Saved Outputs</SheetTitle>
             </SheetHeader>
-            <SavedOutputsList outputs={outputs} onDelete={handleDelete} />
+            <SavedOutputsList outputs={outputs} onDelete={handleDelete} onUpdate={handleUpdate} />
           </SheetContent>
         </Sheet>
       </div>
