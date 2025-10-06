@@ -851,26 +851,26 @@ async def create_stream_run(
             result_state = agent.invoke({"messages": lc_messages})
             result_msgs = result_state.get("messages", [])
             
-            # Only persist NEW messages (those added by the LLM, not the input history)
+            # Only persist and return NEW messages (those added by the LLM, not the input history)
             new_messages = result_msgs[original_message_count:]
             if DEBUG_LOGGING_ENABLED:
                 logger.debug("create_stream_run(%s) original=%s total=%s new=%s", 
                             thread_id, original_message_count, len(result_msgs), len(new_messages))
             
+            # Persist and stream only new AI messages
             for message in new_messages:
                 ui_message = to_ui_message(message)
                 persist_messages(thread_id, [ui_message])
-            
-            # Return the full updated conversation history to prevent flicker
-            all_messages_updated = fetch_messages(thread_id, limit=MAX_CONTEXT_MESSAGES)
-            event_payload = {
-                "values": {"messages": all_messages_updated},
-                "run_id": run_id,
-                "thread_id": thread_id,
-            }
-            yield "event: values\n"
-            yield f"data: {json.dumps(event_payload)}\n\n"
-            await asyncio.sleep(0.05)
+                
+                if ui_message["type"] == "ai":
+                    event_payload = {
+                        "values": {"messages": [ui_message]},
+                        "run_id": run_id,
+                        "thread_id": thread_id,
+                    }
+                    yield "event: values\n"
+                    yield f"data: {json.dumps(event_payload)}\n\n"
+                    await asyncio.sleep(0.05)
 
             touch_thread(thread_id)
             completion_event = {

@@ -101,7 +101,7 @@ const StreamSession = ({
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
-    // Enable history fetching to load thread messages when switching threads
+    // Enable history fetching - backend only returns new messages, SDK accumulates state
     fetchStateHistory: true,
     metadata: {
       assistant_id: assistantId,
