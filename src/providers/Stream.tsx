@@ -4,6 +4,7 @@ import React, {
   ReactNode,
   useState,
   useEffect,
+  useRef,
 } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
@@ -100,7 +101,7 @@ const StreamSession = ({
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
-    // Fetch history only on initial load/thread change, not during active conversation
+    // Enable history fetching to load thread messages when switching threads
     fetchStateHistory: true,
     metadata: {
       assistant_id: assistantId,

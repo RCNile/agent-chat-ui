@@ -210,6 +210,7 @@ export function Thread() {
       Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
 
     // Send only the new message - backend will load full conversation history from DB
+    // Use optimistic updates to show user message immediately
     stream.submit(
       { messages: [newHumanMessage], context },
       {

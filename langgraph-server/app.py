@@ -339,7 +339,7 @@ def list_threads_db(
         if DEBUG_LOGGING_ENABLED:
             logger.debug("list_threads_db(%s) returned %s rows", filter_obj, len(rows))
         return [
-            thread_from_row(row, include_messages=True, message_limit=50)
+            thread_from_row(row, include_messages=True, message_limit=MAX_CONTEXT_MESSAGES)
             for row in rows
         ]
 
@@ -673,7 +673,7 @@ def get_thread_state(thread_id: str):
 @app.post("/threads/{thread_id}/history")
 def get_thread_history(
     thread_id: str,
-    limit: int = Query(10, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=200),
     before: Optional[str] = Query(None),
 ):
     if not get_thread_row(thread_id, include_messages=False):
@@ -687,7 +687,9 @@ def get_thread_history(
 
 
 def checkpoint_payload(thread_id: str, limit: Optional[int] = None) -> Dict[str, Any]:
-    messages = fetch_messages(thread_id, limit=limit)
+    # Use MAX_CONTEXT_MESSAGES if no limit specified
+    effective_limit = limit if limit is not None else MAX_CONTEXT_MESSAGES
+    messages = fetch_messages(thread_id, limit=effective_limit)
     return {
         "checkpoint_id": f"{thread_id}-latest",
         "parent_checkpoint_id": None,
@@ -849,7 +851,7 @@ async def create_stream_run(
             result_state = agent.invoke({"messages": lc_messages})
             result_msgs = result_state.get("messages", [])
             
-            # Only process NEW messages (those added by the LLM, not the input history)
+            # Only persist NEW messages (those added by the LLM, not the input history)
             new_messages = result_msgs[original_message_count:]
             if DEBUG_LOGGING_ENABLED:
                 logger.debug("create_stream_run(%s) original=%s total=%s new=%s", 
@@ -858,15 +860,17 @@ async def create_stream_run(
             for message in new_messages:
                 ui_message = to_ui_message(message)
                 persist_messages(thread_id, [ui_message])
-                if ui_message["type"] == "ai":
-                    event_payload = {
-                        "values": {"messages": [ui_message]},
-                        "run_id": run_id,
-                        "thread_id": thread_id,
-                    }
-                    yield "event: values\n"
-                    yield f"data: {json.dumps(event_payload)}\n\n"
-                    await asyncio.sleep(0.05)
+            
+            # Return the full updated conversation history to prevent flicker
+            all_messages_updated = fetch_messages(thread_id, limit=MAX_CONTEXT_MESSAGES)
+            event_payload = {
+                "values": {"messages": all_messages_updated},
+                "run_id": run_id,
+                "thread_id": thread_id,
+            }
+            yield "event: values\n"
+            yield f"data: {json.dumps(event_payload)}\n\n"
+            await asyncio.sleep(0.05)
 
             touch_thread(thread_id)
             completion_event = {
