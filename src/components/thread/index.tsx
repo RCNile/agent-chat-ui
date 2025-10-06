@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useStreamContext } from "@/providers/Stream";
@@ -123,7 +123,20 @@ export function Thread() {
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
   const stream = useStreamContext();
-  const messages = stream.messages;
+  
+  // Stabilise messages to prevent flash during state updates
+  // When fetchStateHistory refetches, prevent messages from appearing empty
+  const prevMessagesRef = useRef<Message[]>([]);
+  const messages = useMemo(() => {
+    // Only update if we have messages, otherwise keep previous
+    if (stream.messages && stream.messages.length > 0) {
+      prevMessagesRef.current = stream.messages;
+      return stream.messages;
+    }
+    // If messages array is empty/undefined, return previous messages to prevent flash
+    return prevMessagesRef.current;
+  }, [stream.messages]);
+  
   const isLoading = stream.isLoading;
 
 
