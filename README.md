@@ -5,6 +5,139 @@ Agent Chat UI is a Next.js application which enables chatting with any LangGraph
 > [!NOTE]
 > 🎥 Watch the video setup guide [here](https://youtu.be/lInrwVnZ83o).
 
+## System Architecture
+
+This application consists of two main components working together:
+
+### Frontend (Next.js + React)
+- **Technology Stack**: Next.js 15, React 19, TypeScript, TailwindCSS
+- **State Management**: LangGraph SDK's `useStream` hook with custom stabilisation layer
+- **UI Components**: Modular component architecture with shadcn/ui
+- **Real-time Updates**: Server-Sent Events (SSE) for streaming responses
+
+### Backend (Python + FastAPI)
+- **Technology Stack**: Python, FastAPI, LangGraph, SQLite
+- **Agent Engine**: LangGraph-based conversational agent with tool calling
+- **Persistence**: SQLite database for conversation history and thread management
+- **API**: RESTful endpoints compatible with LangGraph SDK
+
+### How It Works
+
+1. **Message Flow**:
+   - User sends a message through the React UI
+   - Frontend uses optimistic updates to immediately show the user's message
+   - Message is sent to the backend via streaming API
+   - Backend loads full conversation history from SQLite
+   - LangGraph agent processes the message with full context
+   - AI response streams back via Server-Sent Events
+   - Frontend displays streaming tokens in real-time
+
+2. **State Management**:
+   - **Thread-based conversations**: Each conversation is stored in a thread with unique ID
+   - **Message persistence**: All messages stored in SQLite with metadata
+   - **History fetching**: Backend manages context by loading last N messages
+   - **Optimistic updates**: UI updates immediately before backend confirmation
+   - **Message stabilisation**: Custom layer prevents UI flashing during state refetches
+
+3. **Key Features**:
+   - Thread history with conversation switching
+   - Saved outputs for important responses
+   - Tool call visibility toggle
+   - Multimodal support (images, PDFs)
+   - Artifact rendering in side panel
+   - Branch switching for exploring alternative conversation paths
+   - Message regeneration and editing
+
+### Technical Highlights
+
+#### Message Stabilisation
+The UI implements a stabilisation layer to prevent messages from briefly disappearing during state updates:
+
+```typescript
+// Messages are cached and only updated when new non-empty messages arrive
+const prevMessagesRef = useRef<Message[]>([]);
+const messages = useMemo(() => {
+  if (stream.messages && stream.messages.length > 0) {
+    prevMessagesRef.current = stream.messages;
+    return stream.messages;
+  }
+  return prevMessagesRef.current;
+}, [stream.messages]);
+```
+
+This ensures a smooth user experience without visual glitches when the backend refetches conversation history.
+
+#### Conversation History Management
+The backend implements efficient context management:
+- Loads only the most recent messages (configurable, default: 50)
+- Stores all messages in SQLite for full conversation persistence
+- Returns only new messages to the frontend
+- Frontend accumulates state using LangGraph SDK's history fetching
+
+#### Performance Optimisations
+- Modular component architecture for efficient re-renders
+- Memoisation of expensive computations
+- Lazy loading of conversation history
+- Efficient database queries with proper indexing
+
+### Project Structure
+
+```
+agent-chat-ui/
+├── src/
+│   ├── app/                      # Next.js app router
+│   │   ├── api/                  # API routes (optional passthrough)
+│   │   ├── layout.tsx            # Root layout
+│   │   └── page.tsx              # Main page
+│   ├── components/
+│   │   ├── thread/               # Main chat interface
+│   │   │   ├── index.tsx         # Thread component (message stabilisation)
+│   │   │   ├── messages/         # Message components (AI, Human)
+│   │   │   ├── history/          # Thread history sidebar
+│   │   │   ├── saved-outputs/    # Saved outputs panel
+│   │   │   └── artifact.tsx      # Artifact rendering
+│   │   └── ui/                   # Reusable UI components (buttons, inputs)
+│   ├── providers/
+│   │   ├── Stream.tsx            # Stream context with useStream hook
+│   │   └── Thread.tsx            # Thread management context
+│   ├── lib/                      # Utility functions
+│   └── hooks/                    # Custom React hooks
+├── langgraph-server/             # Backend server
+│   ├── app.py                    # FastAPI application
+│   ├── requirements.txt          # Python dependencies
+│   └── langgraph.db              # SQLite database (auto-created)
+└── public/                       # Static assets
+```
+
+### Component Architecture
+
+**Thread Component** (`src/components/thread/index.tsx`):
+- Main chat interface container
+- Implements message stabilisation
+- Manages input, file uploads, and UI state
+- Coordinates with Stream provider for data
+
+**Stream Provider** (`src/providers/Stream.tsx`):
+- Wraps `useStream` hook from LangGraph SDK
+- Configures streaming with `fetchStateHistory: true`
+- Handles connection to backend API
+- Manages thread lifecycle and state updates
+
+**Message Components**:
+- `AssistantMessage`: Renders AI responses with tool calls
+- `HumanMessage`: Renders user messages with edit capability
+- `ToolCalls`: Displays tool execution and results
+
+**Thread History** (`src/components/thread/history/`):
+- Lists all conversation threads
+- Supports thread switching
+- Displays thread metadata and timestamps
+
+**Saved Outputs** (`src/components/thread/saved-outputs/`):
+- Stores important AI responses
+- Persists to localStorage
+- Allows quick reference to saved content
+
 ## Setup
 
 > [!TIP]
