@@ -100,6 +100,7 @@ const StreamSession = ({
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
+    // Fetch history only on initial load/thread change, not during active conversation
     fetchStateHistory: true,
     metadata: {
       assistant_id: assistantId,

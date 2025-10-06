@@ -209,8 +209,9 @@ export function Thread() {
     const context =
       Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
 
+    // Send only the new message - backend will load full conversation history from DB
     stream.submit(
-      { messages: [...toolMessages, newHumanMessage], context },
+      { messages: [newHumanMessage], context },
       {
         streamMode: ["values"],
         streamSubgraphs: true,

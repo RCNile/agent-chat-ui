@@ -44,6 +44,7 @@ DB_TIMEOUT = float(os.getenv("CHAT_DB_TIMEOUT", "30"))
 DB_BUSY_TIMEOUT_MS = int(os.getenv("CHAT_DB_BUSY_TIMEOUT_MS", "5000"))
 DB_LOCK_RETRY_ATTEMPTS = int(os.getenv("CHAT_DB_LOCK_RETRY_ATTEMPTS", "5"))
 DB_LOCK_RETRY_DELAY = float(os.getenv("CHAT_DB_LOCK_RETRY_DELAY", "0.1"))
+MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", "50"))
 
 DEBUG_LOGGING_ENABLED = os.getenv("CHAT_DEBUG_LOG", "false").lower() == "true"
 
@@ -61,8 +62,15 @@ prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are a thorough assistant. Use supplied context when relevant, cite concrete "
-            "details where you can, and acknowledge uncertainty instead of guessing.\n\nContext:\n{context}",
+            "You are a thorough and knowledgeable assistant with access to the full conversation history. "
+            "When answering questions:\n"
+            "- Reference previous messages and topics discussed in the conversation\n"
+            "- Build upon prior context and information shared\n"
+            "- Use the supplied reference context to provide detailed, accurate responses\n"
+            "- Cite concrete details from the context where relevant\n"
+            "- Acknowledge uncertainty instead of guessing\n"
+            "- Maintain continuity across the conversation thread\n\n"
+            "Reference Context:\n{context}",
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]
@@ -733,15 +741,29 @@ async def create_run(
     if DEBUG_LOGGING_ENABLED:
         logger.debug("create_run(%s) received %s incoming messages", thread_id, len(messages))
 
+    # Convert and persist incoming messages
     ui_messages = [to_ui_message(msg) for msg in messages]
     persist_messages(thread_id, ui_messages)
-    lc_messages = [to_lc_message(msg) for msg in ui_messages]
+    
+    # Load full conversation history from the thread
+    all_messages = fetch_messages(thread_id, limit=MAX_CONTEXT_MESSAGES)
+    if DEBUG_LOGGING_ENABLED:
+        logger.debug("create_run(%s) loaded %s historical messages", thread_id, len(all_messages))
+    
+    # Convert all messages to LangChain format for the agent
+    lc_messages = [to_lc_message(msg) for msg in all_messages]
+    original_message_count = len(lc_messages)
 
     result_state = agent.invoke({"messages": lc_messages})
-    result_ui = [to_ui_message(msg) for msg in result_state.get("messages", [])]
+    result_msgs = result_state.get("messages", [])
+    
+    # Only process NEW messages (those added by the LLM, not the input history)
+    new_messages = result_msgs[original_message_count:]
+    result_ui = [to_ui_message(msg) for msg in new_messages]
     persist_messages(thread_id, result_ui)
     if DEBUG_LOGGING_ENABLED:
-        logger.debug("create_run(%s) produced %s messages", thread_id, len(result_ui))
+        logger.debug("create_run(%s) original=%s total=%s new=%s", 
+                    thread_id, original_message_count, len(result_msgs), len(new_messages))
     touch_thread(thread_id)
 
     return {
@@ -811,16 +833,31 @@ async def create_stream_run(
                 yield f"data: {json.dumps(error_event)}\n\n"
                 return
 
+            # Convert and persist incoming messages
             ui_messages = [to_ui_message(msg) for msg in incoming]
             persist_messages(thread_id, ui_messages)
-            lc_messages = [to_lc_message(msg) for msg in ui_messages]
+            
+            # Load full conversation history from the thread
+            all_messages = fetch_messages(thread_id, limit=MAX_CONTEXT_MESSAGES)
+            if DEBUG_LOGGING_ENABLED:
+                logger.debug("create_stream_run(%s) loaded %s historical messages", thread_id, len(all_messages))
+            
+            # Convert all messages to LangChain format for the agent
+            lc_messages = [to_lc_message(msg) for msg in all_messages]
+            original_message_count = len(lc_messages)
 
             result_state = agent.invoke({"messages": lc_messages})
             result_msgs = result_state.get("messages", [])
-            for message in result_msgs:
+            
+            # Only process NEW messages (those added by the LLM, not the input history)
+            new_messages = result_msgs[original_message_count:]
+            if DEBUG_LOGGING_ENABLED:
+                logger.debug("create_stream_run(%s) original=%s total=%s new=%s", 
+                            thread_id, original_message_count, len(result_msgs), len(new_messages))
+            
+            for message in new_messages:
                 ui_message = to_ui_message(message)
                 persist_messages(thread_id, [ui_message])
-
                 if ui_message["type"] == "ai":
                     event_payload = {
                         "values": {"messages": [ui_message]},

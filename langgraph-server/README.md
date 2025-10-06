@@ -28,8 +28,25 @@ This server provides a simple echo agent for testing the Agent Chat UI. You can 
 
 ## Environment Variables
 
-If you want to use OpenAI or other LLM providers, set the appropriate API keys:
-
+Required:
 ```bash
 export OPENAI_API_KEY="your-openai-api-key"
+```
+
+Optional configuration:
+```bash
+# Maximum number of historical messages to include in context (default: 50)
+export MAX_CONTEXT_MESSAGES="50"
+
+# OpenAI model to use (default: gpt-4o)
+export OPENAI_MODEL="gpt-4o"
+
+# Model temperature (default: 0.2)
+export OPENAI_TEMPERATURE="0.2"
+
+# Path to documents for RAG (default: data/critical_role)
+export DOCS_PATH="data/critical_role"
+
+# Enable debug logging (default: false)
+export CHAT_DEBUG_LOG="true"
 ```
