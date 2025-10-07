@@ -83,15 +83,6 @@ export function useUploadedDocuments() {
     const updatedDocs = documents.map(doc => 
       doc.id === id ? { ...doc, selected: !doc.selected } : doc
     );
-    console.log("Toggling document selection:", {
-      id,
-      documentName: documents.find(d => d.id === id)?.block.metadata?.filename,
-      newState: updatedDocs.find(d => d.id === id)?.selected,
-      allDocumentsAfterToggle: updatedDocs.map(d => ({
-        filename: d.block.metadata?.filename || d.block.metadata?.name,
-        selected: d.selected
-      }))
-    });
     saveDocuments(updatedDocs);
   };
 
@@ -117,16 +108,7 @@ export function useUploadedDocuments() {
       }
     }
     
-    const selected = currentDocs.filter(doc => doc.selected);
-    console.log("All documents (from localStorage):", currentDocs.map(d => ({
-      filename: d.block.metadata?.filename || d.block.metadata?.name,
-      selected: d.selected
-    })));
-    console.log("Filtered selected documents:", selected.map(d => ({
-      filename: d.block.metadata?.filename || d.block.metadata?.name,
-      selected: d.selected
-    })));
-    return selected;
+    return currentDocs.filter(doc => doc.selected);
   };
 
   return {
