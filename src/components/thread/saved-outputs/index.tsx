@@ -13,6 +13,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { MarkdownText } from "@/components/thread/markdown-text";
 
 interface SavedOutput {
   id: string;
@@ -27,10 +28,12 @@ function SavedOutputItem({
   output,
   onDelete,
   onUpdate,
+  onClick,
 }: {
   output: SavedOutput;
   onDelete: (id: string) => void;
   onUpdate: (id: string, newTitle: string) => void;
+  onClick: (output: SavedOutput) => void;
 }) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -132,8 +135,11 @@ function SavedOutputItem({
           </div>
         </div>
       ) : (
-        <div className="relative rounded-xl border bg-white p-3 shadow-sm transition-shadow hover:shadow-md">
-          <div className="flex items-start gap-3">
+        <div 
+          className="relative rounded-xl border bg-white p-3 shadow-sm transition-shadow hover:shadow-md cursor-pointer"
+          onClick={() => onClick(output)}
+        >
+          <div className="flex items-start gap-3 pr-20">
             <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", iconColour)}>
               <BookmarkIcon className="h-5 w-5" />
             </div>
@@ -146,7 +152,7 @@ function SavedOutputItem({
               </p>
             </div>
           </div>
-          <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+          <div className="absolute right-2 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
             <Button
               variant="ghost"
               size="sm"
@@ -190,10 +196,12 @@ function SavedOutputsList({
   outputs,
   onDelete,
   onUpdate,
+  onClick,
 }: {
   outputs: SavedOutput[];
   onDelete: (id: string) => void;
   onUpdate: (id: string, newTitle: string) => void;
+  onClick: (output: SavedOutput) => void;
 }) {
   if (outputs.length === 0) {
     return (
@@ -219,6 +227,7 @@ function SavedOutputsList({
           output={output}
           onDelete={onDelete}
           onUpdate={onUpdate}
+          onClick={onClick}
         />
       ))}
     </div>
@@ -237,6 +246,63 @@ function SavedOutputsLoading() {
   );
 }
 
+function OutputModal({ 
+  output, 
+  open, 
+  onOpenChange 
+}: { 
+  output: SavedOutput | null; 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void;
+}) {
+  if (!output) return null;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(output.content);
+    toast.success("Content copied to clipboard");
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent 
+        side="right" 
+        className="w-full sm:max-w-2xl lg:max-w-3xl overflow-y-auto"
+      >
+        <SheetHeader className="pb-4">
+          <SheetTitle className="text-xl font-semibold pr-8">{output.title}</SheetTitle>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
+            <span>{output.timestamp.toLocaleDateString('en-GB', { 
+              day: '2-digit', 
+              month: '2-digit', 
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}</span>
+          </div>
+        </SheetHeader>
+        
+        <div className="mt-4 space-y-4">
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopy}
+              className="gap-2"
+            >
+              <Download className="h-4 w-4" />
+              Copy to Clipboard
+            </Button>
+          </div>
+          
+          <div className="rounded-lg border bg-gray-50 p-4">
+            <MarkdownText>{output.content}</MarkdownText>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export default function SavedOutputs() {
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
   const [savedOutputsOpen, setSavedOutputsOpen] = useQueryState(
@@ -246,6 +312,8 @@ export default function SavedOutputs() {
 
   const [outputs, setOutputs] = useState<SavedOutput[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedOutput, setSelectedOutput] = useState<SavedOutput | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   // Function to load saved outputs from localStorage
   const loadOutputs = () => {
@@ -294,19 +362,24 @@ export default function SavedOutputs() {
   }, []);
 
   const handleDelete = (id: string) => {
-    const updated = outputs.filter(output => output.id !== id);
+    const updated = outputs.filter((output: SavedOutput) => output.id !== id);
     setOutputs(updated);
     localStorage.setItem('saved-outputs', JSON.stringify(updated));
   };
 
   const handleUpdate = (id: string, newTitle: string) => {
-    const updated = outputs.map(output => 
+    const updated = outputs.map((output: SavedOutput) => 
       output.id === id ? { ...output, title: newTitle } : output
     );
     setOutputs(updated);
     localStorage.setItem('saved-outputs', JSON.stringify(updated));
     // Dispatch custom event for other windows
     window.dispatchEvent(new Event('saved-outputs-updated'));
+  };
+
+  const handleOutputClick = (output: SavedOutput) => {
+    setSelectedOutput(output);
+    setModalOpen(true);
   };
 
   return (
@@ -316,7 +389,7 @@ export default function SavedOutputs() {
           <Button
             className="hover:bg-gray-100"
             variant="ghost"
-            onClick={() => setSavedOutputsOpen((p) => !p)}
+            onClick={() => setSavedOutputsOpen((p: boolean) => !p)}
           >
             {savedOutputsOpen ? (
               <PanelLeftClose className="size-5" />
@@ -331,13 +404,13 @@ export default function SavedOutputs() {
         {loading ? (
           <SavedOutputsLoading />
         ) : (
-          <SavedOutputsList outputs={outputs} onDelete={handleDelete} onUpdate={handleUpdate} />
+          <SavedOutputsList outputs={outputs} onDelete={handleDelete} onUpdate={handleUpdate} onClick={handleOutputClick} />
         )}
       </div>
       <div className="lg:hidden">
         <Sheet
           open={!!savedOutputsOpen && !isLargeScreen}
-          onOpenChange={(open) => {
+          onOpenChange={(open: boolean) => {
             if (isLargeScreen) return;
             setSavedOutputsOpen(open);
           }}
@@ -349,10 +422,11 @@ export default function SavedOutputs() {
             <SheetHeader>
               <SheetTitle>Saved Outputs</SheetTitle>
             </SheetHeader>
-            <SavedOutputsList outputs={outputs} onDelete={handleDelete} onUpdate={handleUpdate} />
+            <SavedOutputsList outputs={outputs} onDelete={handleDelete} onUpdate={handleUpdate} onClick={handleOutputClick} />
           </SheetContent>
         </Sheet>
       </div>
+      <OutputModal output={selectedOutput} open={modalOpen} onOpenChange={setModalOpen} />
     </>
   );
 }

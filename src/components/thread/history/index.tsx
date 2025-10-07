@@ -161,7 +161,7 @@ function ThreadList({
   return (
     <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
       {threads.map((t) => {
-        let itemText = t.metadata?.custom_name || t.thread_id;
+        let itemText: string = t.metadata?.custom_name || t.thread_id;
         if (!t.metadata?.custom_name &&
           typeof t.values === "object" &&
           t.values &&
@@ -170,7 +170,8 @@ function ThreadList({
           t.values.messages?.length > 0
         ) {
           const firstMessage = t.values.messages[0];
-          itemText = getContentString(firstMessage.content);
+          const contentText = getContentString(firstMessage.content);
+          itemText = contentText || t.thread_id;
         }
         const isDeleting = deletingThreadId === t.thread_id;
         const isEditing = editingThreadId === t.thread_id;
