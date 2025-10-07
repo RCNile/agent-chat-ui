@@ -6,6 +6,7 @@ import { useStreamContext } from "@/providers/Stream";
 import { useState, FormEvent } from "react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
+import type { Base64ContentBlock } from "@langchain/core/messages";
 import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
 import { HumanMessage } from "./messages/human";
 import {
@@ -133,6 +134,7 @@ export function Thread() {
     if (currentBlocks.length > prevBlocks.length) {
       const newBlocks = currentBlocks.slice(prevBlocks.length);
       if (newBlocks.length > 0) {
+        console.log("Adding documents from upload area:", newBlocks);
         addDocuments(newBlocks);
       }
     }
@@ -230,6 +232,10 @@ export function Thread() {
     
     // Get selected documents and their content blocks
     const selectedDocs = getSelectedDocuments();
+    console.log("Selected documents at send time:", selectedDocs.map(d => ({
+      filename: d.block.metadata?.filename || d.block.metadata?.name,
+      selected: d.selected
+    })));
     const selectedContentBlocks = selectedDocs.map(doc => doc.block);
     
     // Check if there's any content to send (text, newly uploaded files, or selected documents)

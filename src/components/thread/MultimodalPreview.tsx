@@ -1,5 +1,5 @@
 import React from "react";
-import { File, Image as ImageIcon, X as XIcon } from "lucide-react";
+import { File, Image as ImageIcon, X as XIcon, Plus } from "lucide-react";
 import type { Base64ContentBlock } from "@langchain/core/messages";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
@@ -7,6 +7,7 @@ export interface MultimodalPreviewProps {
   block: Base64ContentBlock;
   removable?: boolean;
   onRemove?: () => void;
+  onAddToLibrary?: () => void;
   className?: string;
   size?: "sm" | "md" | "lg";
 }
@@ -15,6 +16,7 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
   block,
   removable = false,
   onRemove,
+  onAddToLibrary,
   className,
   size = "md",
 }) => {
@@ -90,16 +92,29 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
           >
             {String(filename)}
           </span>
-          {removable && (
-            <button
-              type="button"
-              className="ml-2 self-start rounded-full bg-gray-200 p-1 text-teal-700 hover:bg-gray-300"
-              onClick={onRemove}
-              aria-label="Remove document"
-            >
-              <XIcon className="h-4 w-4" />
-            </button>
-          )}
+          <div className="flex gap-1">
+            {onAddToLibrary && (
+              <button
+                type="button"
+                className="self-start rounded-full bg-teal-100 p-1 text-teal-700 hover:bg-teal-200"
+                onClick={onAddToLibrary}
+                aria-label="Add to document library"
+                title="Add to document library"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            )}
+            {removable && (
+              <button
+                type="button"
+                className="self-start rounded-full bg-gray-200 p-1 text-teal-700 hover:bg-gray-300"
+                onClick={onRemove}
+                aria-label="Remove document"
+              >
+                <XIcon className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       );
     }

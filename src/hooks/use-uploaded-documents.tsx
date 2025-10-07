@@ -46,7 +46,23 @@ export function useUploadedDocuments() {
   };
 
   const addDocuments = (blocks: Base64ContentBlock[]) => {
-    const newDocs: UploadedDocument[] = blocks.map(block => ({
+    // Filter out blocks that are already in the library
+    const newBlocks = blocks.filter(block => {
+      const filename = block.metadata?.filename || block.metadata?.name;
+      const isDuplicate = documents.some(doc => {
+        const existingFilename = doc.block.metadata?.filename || doc.block.metadata?.name;
+        return (
+          existingFilename === filename &&
+          doc.block.mime_type === block.mime_type &&
+          doc.block.data === block.data
+        );
+      });
+      return !isDuplicate;
+    });
+
+    if (newBlocks.length === 0) return;
+
+    const newDocs: UploadedDocument[] = newBlocks.map(block => ({
       id: `${Date.now()}-${Math.random()}`,
       block,
       uploadedAt: Date.now(),
@@ -64,11 +80,19 @@ export function useUploadedDocuments() {
   };
 
   const toggleDocumentSelection = (id: string) => {
-    saveDocuments(
-      documents.map(doc => 
-        doc.id === id ? { ...doc, selected: !doc.selected } : doc
-      )
+    const updatedDocs = documents.map(doc => 
+      doc.id === id ? { ...doc, selected: !doc.selected } : doc
     );
+    console.log("Toggling document selection:", {
+      id,
+      documentName: documents.find(d => d.id === id)?.block.metadata?.filename,
+      newState: updatedDocs.find(d => d.id === id)?.selected,
+      allDocumentsAfterToggle: updatedDocs.map(d => ({
+        filename: d.block.metadata?.filename || d.block.metadata?.name,
+        selected: d.selected
+      }))
+    });
+    saveDocuments(updatedDocs);
   };
 
   const selectAllDocuments = () => {
@@ -80,7 +104,29 @@ export function useUploadedDocuments() {
   };
 
   const getSelectedDocuments = () => {
-    return documents.filter(doc => doc.selected);
+    // Read directly from localStorage to get the most up-to-date state
+    // This avoids issues with React state update timing
+    const stored = localStorage.getItem(STORAGE_KEY);
+    let currentDocs = documents;
+    
+    if (stored) {
+      try {
+        currentDocs = JSON.parse(stored);
+      } catch (error) {
+        console.error("Failed to parse documents from storage:", error);
+      }
+    }
+    
+    const selected = currentDocs.filter(doc => doc.selected);
+    console.log("All documents (from localStorage):", currentDocs.map(d => ({
+      filename: d.block.metadata?.filename || d.block.metadata?.name,
+      selected: d.selected
+    })));
+    console.log("Filtered selected documents:", selected.map(d => ({
+      filename: d.block.metadata?.filename || d.block.metadata?.name,
+      selected: d.selected
+    })));
+    return selected;
   };
 
   return {
