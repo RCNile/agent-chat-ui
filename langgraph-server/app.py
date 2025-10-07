@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 import asyncio
+import base64
+import csv
+import io
 import json
 import os
 import pathlib
@@ -23,6 +26,29 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph import MessagesState, StateGraph, START, END
 from pydantic import BaseModel
+
+# Document parsing imports
+try:
+    from docx import Document as DocxDocument
+except ImportError:
+    DocxDocument = None
+
+try:
+    from odf.opendocument import load as odf_load
+    from odf.text import P as OdfParagraph
+except ImportError:
+    odf_load = None
+    OdfParagraph = None
+
+try:
+    from PyPDF2 import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    import chardet
+except ImportError:
+    chardet = None
 
 load_dotenv()
 
@@ -63,11 +89,15 @@ prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             "You are a thorough and knowledgeable assistant with access to the full conversation history. "
+            "You can process and analyse uploaded documents including PDFs, Word documents (DOCX), "
+            "OpenDocument Text (ODT), plain text files, Markdown files, and CSV files. "
+            "When documents are uploaded, their content is extracted and provided to you.\n\n"
             "When answering questions:\n"
             "- Reference previous messages and topics discussed in the conversation\n"
             "- Build upon prior context and information shared\n"
+            "- Analyse and extract information from uploaded documents\n"
             "- Use the supplied reference context to provide detailed, accurate responses\n"
-            "- Cite concrete details from the context where relevant\n"
+            "- Cite concrete details from the context and documents where relevant\n"
             "- Acknowledge uncertainty instead of guessing\n"
             "- Maintain continuity across the conversation thread\n\n"
             "Reference Context:\n{context}",
@@ -441,12 +471,116 @@ def utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def extract_text_from_base64_document(base64_data: str, mime_type: str, filename: str = "") -> str:
+    """Extract text content from base64-encoded documents of various types."""
+    try:
+        decoded_data = base64.b64decode(base64_data)
+        
+        # PDF
+        if mime_type == "application/pdf":
+            if PdfReader is None:
+                return f"[PDF document: {filename}] (PyPDF2 not installed)"
+            try:
+                pdf_file = io.BytesIO(decoded_data)
+                reader = PdfReader(pdf_file)
+                text_parts = []
+                for page in reader.pages:
+                    text_parts.append(page.extract_text())
+                return "\n\n".join(filter(None, text_parts))
+            except Exception as exc:
+                logger.error(f"Failed to parse PDF: {exc}")
+                return f"[PDF document: {filename}] (parsing failed: {exc})"
+        
+        # Plain text
+        elif mime_type == "text/plain":
+            encoding = "utf-8"
+            if chardet:
+                detected = chardet.detect(decoded_data)
+                encoding = detected.get("encoding", "utf-8") or "utf-8"
+            return decoded_data.decode(encoding, errors="replace")
+        
+        # Markdown
+        elif mime_type == "text/markdown":
+            return decoded_data.decode("utf-8", errors="replace")
+        
+        # CSV
+        elif mime_type == "text/csv":
+            text_content = decoded_data.decode("utf-8", errors="replace")
+            csv_file = io.StringIO(text_content)
+            reader = csv.reader(csv_file)
+            rows = []
+            for row in reader:
+                rows.append(" | ".join(row))
+            return "\n".join(rows)
+        
+        # DOCX
+        elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            if DocxDocument is None:
+                return f"[DOCX document: {filename}] (python-docx not installed)"
+            try:
+                docx_file = io.BytesIO(decoded_data)
+                doc = DocxDocument(docx_file)
+                paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+                return "\n\n".join(paragraphs)
+            except Exception as exc:
+                logger.error(f"Failed to parse DOCX: {exc}")
+                return f"[DOCX document: {filename}] (parsing failed: {exc})"
+        
+        # ODT
+        elif mime_type == "application/vnd.oasis.opendocument.text":
+            if odf_load is None or OdfParagraph is None:
+                return f"[ODT document: {filename}] (odfpy not installed)"
+            try:
+                odt_file = io.BytesIO(decoded_data)
+                doc = odf_load(odt_file)
+                paragraphs = []
+                for para in doc.getElementsByType(OdfParagraph):
+                    text = "".join([node.data for node in para.childNodes if hasattr(node, 'data')])
+                    if text.strip():
+                        paragraphs.append(text)
+                return "\n\n".join(paragraphs)
+            except Exception as exc:
+                logger.error(f"Failed to parse ODT: {exc}")
+                return f"[ODT document: {filename}] (parsing failed: {exc})"
+        
+        else:
+            return f"[Unsupported document type: {mime_type}]"
+            
+    except Exception as exc:
+        logger.error(f"Failed to decode base64 document: {exc}")
+        return f"[Document: {filename}] (decoding failed: {exc})"
+
+
 def render_text(content: Any) -> str:
     if isinstance(content, list):
         parts: List[str] = []
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
+            if isinstance(block, dict):
+                block_type = block.get("type")
+                
+                # Handle text blocks
+                if block_type == "text":
+                    parts.append(block.get("text", ""))
+                
+                # Handle file/document blocks
+                elif block_type == "file":
+                    mime_type = block.get("mime_type", "")
+                    base64_data = block.get("data", "")
+                    filename = block.get("metadata", {}).get("filename", "document")
+                    
+                    if base64_data and mime_type:
+                        extracted_text = extract_text_from_base64_document(base64_data, mime_type, filename)
+                        parts.append(f"[Document: {filename}]\n\n{extracted_text}")
+                    else:
+                        parts.append(f"[Document: {filename}]")
+                
+                # Handle image blocks (keep as reference)
+                elif block_type == "image":
+                    filename = block.get("metadata", {}).get("name", "image")
+                    parts.append(f"[Image: {filename}]")
+                
+                else:
+                    parts.append(str(block))
             else:
                 parts.append(str(block))
         return "\n\n".join(filter(None, parts))

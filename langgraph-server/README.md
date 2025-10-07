@@ -40,6 +40,13 @@ The server uses SQLite with three main tables:
 
 - **Persistent Conversations**: All messages stored in SQLite
 - **Context Management**: Configurable message history limit
+- **Document Processing**: Automatic text extraction from uploaded documents
+  - PDF files (PyPDF2)
+  - Word documents - DOCX (python-docx)
+  - OpenDocument Text - ODT (odfpy)
+  - Plain text files (TXT)
+  - Markdown files (MD)
+  - CSV files
 - **Tool Integration**: Extensible tool system via LangGraph
 - **Metadata Support**: Assistant and graph ID tracking
 - **Activity Logging**: Detailed operation logging

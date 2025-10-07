@@ -9,6 +9,11 @@ export const SUPPORTED_FILE_TYPES = [
   "image/gif",
   "image/webp",
   "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.oasis.opendocument.text",
 ];
 
 interface UseFileUploadOptions {
@@ -25,11 +30,20 @@ export function useFileUpload({
   const dragCounter = useRef(0);
 
   const isDuplicate = (file: File, blocks: Base64ContentBlock[]) => {
-    if (file.type === "application/pdf") {
+    const documentTypes = [
+      "application/pdf",
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.oasis.opendocument.text",
+    ];
+    
+    if (documentTypes.includes(file.type)) {
       return blocks.some(
         (b) =>
           b.type === "file" &&
-          b.mime_type === "application/pdf" &&
+          b.mime_type === file.type &&
           b.metadata?.filename === file.name,
       );
     }
@@ -63,7 +77,7 @@ export function useFileUpload({
 
     if (invalidFiles.length > 0) {
       toast.error(
-        "You have uploaded invalid file type. Please upload a JPEG, PNG, GIF, WEBP image or a PDF.",
+        "You have uploaded invalid file type. Please upload JPEG, PNG, GIF, WEBP images or PDF, TXT, Markdown, CSV, DOCX, ODT documents.",
       );
     }
     if (duplicateFiles.length > 0) {
@@ -123,7 +137,7 @@ export function useFileUpload({
 
       if (invalidFiles.length > 0) {
         toast.error(
-          "You have uploaded invalid file type. Please upload a JPEG, PNG, GIF, WEBP image or a PDF.",
+          "You have uploaded invalid file type. Please upload JPEG, PNG, GIF, WEBP images or PDF, TXT, Markdown, CSV, DOCX, ODT documents.",
         );
       }
       if (duplicateFiles.length > 0) {
@@ -221,11 +235,20 @@ export function useFileUpload({
       (file) => !SUPPORTED_FILE_TYPES.includes(file.type),
     );
     const isDuplicate = (file: File) => {
-      if (file.type === "application/pdf") {
+      const documentTypes = [
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.oasis.opendocument.text",
+      ];
+      
+      if (documentTypes.includes(file.type)) {
         return contentBlocks.some(
           (b) =>
             b.type === "file" &&
-            b.mime_type === "application/pdf" &&
+            b.mime_type === file.type &&
             b.metadata?.filename === file.name,
         );
       }
@@ -243,7 +266,7 @@ export function useFileUpload({
     const uniqueFiles = validFiles.filter((file) => !isDuplicate(file));
     if (invalidFiles.length > 0) {
       toast.error(
-        "You have pasted an invalid file type. Please paste a JPEG, PNG, GIF, WEBP image or a PDF.",
+        "You have pasted an invalid file type. Please paste JPEG, PNG, GIF, WEBP images or PDF, TXT, Markdown, CSV, DOCX, ODT documents.",
       );
     }
     if (duplicateFiles.length > 0) {

@@ -39,6 +39,7 @@ import {
   TooltipTrigger,
 } from "../ui/tooltip";
 import { useFileUpload } from "@/hooks/use-file-upload";
+import { useUploadedDocuments } from "@/hooks/use-uploaded-documents";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
 import {
   useArtifactOpen,
@@ -119,8 +120,25 @@ export function Thread() {
     dragOver,
     handlePaste,
   } = useFileUpload();
+  const { addDocuments, getSelectedDocuments } = useUploadedDocuments();
   const [firstTokenReceived, setFirstTokenReceived] = useState(false);
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
+  const prevContentBlocksRef = useRef(contentBlocks);
+
+  // Track when new documents are uploaded and save to global storage
+  useEffect(() => {
+    const prevBlocks = prevContentBlocksRef.current;
+    const currentBlocks = contentBlocks;
+    
+    if (currentBlocks.length > prevBlocks.length) {
+      const newBlocks = currentBlocks.slice(prevBlocks.length);
+      if (newBlocks.length > 0) {
+        addDocuments(newBlocks);
+      }
+    }
+    
+    prevContentBlocksRef.current = currentBlocks;
+  }, [contentBlocks, addDocuments]);
 
   const stream = useStreamContext();
   
@@ -209,16 +227,33 @@ export function Thread() {
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
+    
+    // Get selected documents and their content blocks
+    const selectedDocs = getSelectedDocuments();
+    const selectedContentBlocks = selectedDocs.map(doc => doc.block);
+    
+    // Check if there's any content to send (text, newly uploaded files, or selected documents)
+    if ((input.trim().length === 0 && contentBlocks.length === 0 && selectedContentBlocks.length === 0) || isLoading)
       return;
     setFirstTokenReceived(false);
+
+    // Combine all content blocks (newly uploaded and selected from sidebar)
+    const allContentBlocks = [...contentBlocks, ...selectedContentBlocks];
 
     const newHumanMessage: Message = {
       id: uuidv4(),
       type: "human",
       content: [
         ...(input.trim().length > 0 ? [{ type: "text", text: input }] : []),
-        ...contentBlocks,
+        ...allContentBlocks.map(block => ({
+          ...block,
+          // Ensure each block has proper metadata for the AI to process
+          metadata: {
+            ...block.metadata,
+            isReference: block.type === "file",
+            source: "uploaded_document"
+          }
+        }))
       ] as Message["content"],
     };
 
@@ -548,7 +583,7 @@ export function Thread() {
                         >
                           <Plus className="size-5 text-gray-600" />
                           <span className="text-sm text-gray-600">
-                            Upload PDF or Image
+                            Upload Documents
                           </span>
                         </Label>
                         <input
@@ -556,7 +591,7 @@ export function Thread() {
                           type="file"
                           onChange={handleFileUpload}
                           multiple
-                          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+                          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,.txt,.md,.csv,.docx,.odt"
                           className="hidden"
                         />
                         {stream.isLoading ? (

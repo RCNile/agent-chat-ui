@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useThreads } from "@/providers/Thread";
 import { Thread } from "@langchain/langgraph-sdk";
 import { useEffect, useState } from "react";
@@ -13,12 +14,15 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelRightOpen, PanelRightClose, Trash2, Pencil, Check, X } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { PanelRightOpen, PanelRightClose, Trash2, Pencil, Check, X, FileText } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/providers/client";
 import { getApiKey } from "@/lib/api-key";
 import { toast } from "sonner";
+import { useUploadedDocuments } from "@/hooks/use-uploaded-documents";
+import { MultimodalPreview } from "../MultimodalPreview";
 
 function ThreadList({
   threads,
@@ -270,6 +274,84 @@ function ThreadHistoryLoading() {
   );
 }
 
+function UploadedDocumentsList() {
+  const { 
+    documents, 
+    removeDocument, 
+    clearAllDocuments,
+    toggleDocumentSelection,
+    selectAllDocuments,
+    deselectAllDocuments,
+  } = useUploadedDocuments();
+
+  if (documents.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-sm text-muted-foreground">
+        <FileText className="h-8 w-8 text-gray-300" />
+        <p>No documents uploaded yet</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full w-full flex-col gap-3">
+      <div className="flex items-center justify-between px-4">
+        <div className="flex items-center gap-2">
+          {documents.length > 0 && (
+            <Checkbox
+              checked={documents.every(doc => doc.selected ?? false)}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  selectAllDocuments();
+                } else {
+                  deselectAllDocuments();
+                }
+              }}
+            />
+          )}
+          <span className="text-xs text-muted-foreground">
+            {documents.length} {documents.length === 1 ? "document" : "documents"}
+          </span>
+        </div>
+        {documents.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+            onClick={() => {
+              if (window.confirm("Are you sure you want to clear all uploaded documents?")) {
+                clearAllDocuments();
+                toast.success("All documents cleared");
+              }
+            }}
+          >
+            Clear All
+          </Button>
+        )}
+      </div>
+      <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll px-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
+        {documents.map((doc) => (
+          <div key={doc.id} className="w-full flex items-start gap-2">
+            <Checkbox
+              checked={doc.selected ?? false}
+              onCheckedChange={() => toggleDocumentSelection(doc.id)}
+              className="mt-2"
+            />
+            <div className="flex-1">
+              <MultimodalPreview
+                block={doc.block}
+                removable
+                onRemove={() => removeDocument(doc.id)}
+                size="sm"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ThreadHistory() {
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
@@ -305,8 +387,9 @@ export default function ThreadHistory() {
 
   return (
     <>
-      <div className="shadow-inner-right hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start gap-6 border-r-[1px] border-slate-300 lg:flex">
-        <div className="flex w-full items-center justify-between px-4 pt-1.5">
+      <div className="shadow-inner-right hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start border-r-[1px] border-slate-300 lg:flex">
+        {/* Header */}
+        <div className="flex w-full items-center justify-between px-4 pt-1.5 pb-4">
           <Button
             className="hover:bg-gray-100"
             variant="ghost"
@@ -322,16 +405,38 @@ export default function ThreadHistory() {
             Thread History
           </h1>
         </div>
-        {threadsLoading ? (
-          <ThreadHistoryLoading />
-        ) : (
-          <ThreadList 
-            threads={threads} 
-            onThreadDelete={handleThreadDelete}
-            onThreadUpdate={handleThreadUpdate}
-          />
-        )}
+        
+        {/* Thread History Section - Top Half */}
+        <div className="flex-1 flex flex-col min-h-0 w-full">
+          <div className="px-4 pb-2">
+            <h2 className="text-sm font-medium text-muted-foreground">Threads</h2>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            {threadsLoading ? (
+              <ThreadHistoryLoading />
+            ) : (
+              <ThreadList 
+                threads={threads} 
+                onThreadDelete={handleThreadDelete}
+                onThreadUpdate={handleThreadUpdate}
+              />
+            )}
+          </div>
+        </div>
+
+        <Separator className="my-2" />
+
+        {/* Uploaded Documents Section - Bottom Half */}
+        <div className="flex-1 flex flex-col min-h-0 w-full pb-4">
+          <div className="px-4 pb-2">
+            <h2 className="text-sm font-medium text-muted-foreground">Uploaded Documents</h2>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <UploadedDocumentsList />
+          </div>
+        </div>
       </div>
+      
       <div className="lg:hidden">
         <Sheet
           open={!!chatHistoryOpen && !isLargeScreen}
@@ -342,17 +447,34 @@ export default function ThreadHistory() {
         >
           <SheetContent
             side="left"
-            className="flex lg:hidden"
+            className="flex flex-col lg:hidden"
           >
             <SheetHeader>
               <SheetTitle>Thread History</SheetTitle>
             </SheetHeader>
-            <ThreadList
-              threads={threads}
-              onThreadClick={() => setChatHistoryOpen((o) => !o)}
-              onThreadDelete={handleThreadDelete}
-              onThreadUpdate={handleThreadUpdate}
-            />
+            
+            {/* Thread History Section */}
+            <div className="flex-1 flex flex-col min-h-0 mt-4">
+              <h2 className="text-sm font-medium text-muted-foreground px-2 pb-2">Threads</h2>
+              <div className="flex-1 overflow-hidden">
+                <ThreadList
+                  threads={threads}
+                  onThreadClick={() => setChatHistoryOpen((o) => !o)}
+                  onThreadDelete={handleThreadDelete}
+                  onThreadUpdate={handleThreadUpdate}
+                />
+              </div>
+            </div>
+
+            <Separator className="my-4" />
+
+            {/* Uploaded Documents Section */}
+            <div className="flex-1 flex flex-col min-h-0">
+              <h2 className="text-sm font-medium text-muted-foreground px-2 pb-2">Uploaded Documents</h2>
+              <div className="flex-1 overflow-hidden">
+                <UploadedDocumentsList />
+              </div>
+            </div>
           </SheetContent>
         </Sheet>
       </div>

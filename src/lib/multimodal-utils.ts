@@ -1,7 +1,7 @@
 import type { Base64ContentBlock } from "@langchain/core/messages";
 import { toast } from "sonner";
 
-// Returns a Promise of a typed multimodal block for images or PDFs
+// Returns a Promise of a typed multimodal block for images or documents
 export async function fileToContentBlock(
   file: File,
 ): Promise<Base64ContentBlock> {
@@ -11,7 +11,15 @@ export async function fileToContentBlock(
     "image/gif",
     "image/webp",
   ];
-  const supportedFileTypes = [...supportedImageTypes, "application/pdf"];
+  const supportedDocumentTypes = [
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.oasis.opendocument.text",
+  ];
+  const supportedFileTypes = [...supportedImageTypes, ...supportedDocumentTypes];
 
   if (!supportedFileTypes.includes(file.type)) {
     toast.error(
@@ -32,11 +40,11 @@ export async function fileToContentBlock(
     };
   }
 
-  // PDF
+  // Document types (PDF, TXT, Markdown, CSV, DOCX, ODT)
   return {
     type: "file",
     source_type: "base64",
-    mime_type: "application/pdf",
+    mime_type: file.type,
     data,
     metadata: { filename: file.name },
   };
@@ -62,7 +70,17 @@ export function isBase64ContentBlock(
 ): block is Base64ContentBlock {
   if (typeof block !== "object" || block === null || !("type" in block))
     return false;
-  // file type (legacy)
+  
+  const supportedDocumentTypes = [
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.oasis.opendocument.text",
+  ];
+  
+  // file type (documents)
   if (
     (block as { type: unknown }).type === "file" &&
     "source_type" in block &&
@@ -70,7 +88,7 @@ export function isBase64ContentBlock(
     "mime_type" in block &&
     typeof (block as { mime_type?: unknown }).mime_type === "string" &&
     ((block as { mime_type: string }).mime_type.startsWith("image/") ||
-      (block as { mime_type: string }).mime_type === "application/pdf")
+      supportedDocumentTypes.includes((block as { mime_type: string }).mime_type))
   ) {
     return true;
   }
